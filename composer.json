@@ -1,0 +1,7 @@
+
+
+Extend
+	•	Swap assignment_resolver in config/workflows.php to implement org-specific logic.
+	•	Use GuardEvaluator gates and JSON ops to restrict transitions.
+	•	Hook into notifications by customizing NextApproverNotification.
+
