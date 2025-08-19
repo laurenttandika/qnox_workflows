@@ -1,7 +1,22 @@
-
-
-Extend
-	•	Swap assignment_resolver in config/workflows.php to implement org-specific logic.
-	•	Use GuardEvaluator gates and JSON ops to restrict transitions.
-	•	Hook into notifications by customizing NextApproverNotification.
-
+{
+  "name": "qnox/workflows",
+  "description": "Configurable, GUI-driven workflow engine for Laravel (dynamic action keywords)",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Qnox\\Workflows\\": "src/"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Qnox\\Workflows\\WorkflowsServiceProvider"
+      ]
+    }
+  },
+  "require": {
+    "php": ">=8.2",
+    "illuminate/support": "^10.0|^11.0"
+  }
+}

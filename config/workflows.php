@@ -2,11 +2,11 @@
 
 return [
     // Fully qualified class name of your User model
-    'user_model' => App\\Models\\User::class,
+    'user_model' => App\Models\User::class,
 
     // Bind a custom resolver here if you replace the default
-    'assignment_resolver' => Qnox\\Workflows\\Services\\DefaultAssignmentResolver::class,
+    'assignment_resolver' => Qnox\Workflows\Services\DefaultAssignmentResolver::class,
 
     // Notification channels for next approvers
-    'notify_channels' => ['mail'],
+    'notify_channels' => ['mail']
 ];
