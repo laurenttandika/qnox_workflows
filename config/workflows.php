@@ -10,7 +10,7 @@ return [
     // Notification channels for next approvers
     'notify_channels' => ['mail'],
 
-    // Default action labels used by the IOO-WEB-V2 inspired workflow flow.
+    // Default action labels. Transitions may still override these with their own label.
     'action_labels' => [
         'submit' => 'Submit',
         'approve' => 'Approve',

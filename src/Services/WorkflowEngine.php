@@ -80,29 +80,15 @@ class WorkflowEngine
             return [];
         }
 
-        if ($level->outgoingTransitions->isNotEmpty()) {
-            return $level->outgoingTransitions
-                ->filter(fn (WorkflowTransition $transition) => $this->guards->passes($transition->guard, $instance, $actor))
-                ->map(fn (WorkflowTransition $transition) => [
-                    'action_key' => $transition->action_key,
-                    'label' => $transition->label ?: $this->labelFor($transition->action_key),
-                    'to_level_id' => (int) $transition->to_level_id,
-                    'direction' => $transition->direction,
-                    'status' => $this->statusForAction($transition->action_key, false),
-                    'form_schema' => $transition->form_schema,
-                ])
-                ->values()
-                ->all();
-        }
-
-        return collect($this->fallbackActions($instance, $level))
-            ->map(fn (array $action) => [
-                'action_key' => $action['action_key'],
-                'label' => $this->labelFor($action['action_key']),
-                'to_level_id' => $action['to_level_id'],
-                'direction' => $action['direction'],
-                'status' => $action['status'],
-                'form_schema' => null,
+        return $level->outgoingTransitions
+            ->filter(fn (WorkflowTransition $transition) => $this->guards->passes($transition->guard, $instance, $actor))
+            ->map(fn (WorkflowTransition $transition) => [
+                'action_key' => $transition->action_key,
+                'label' => $transition->label ?: $this->labelFor($transition->action_key),
+                'to_level_id' => $transition->to_level_id ? (int) $transition->to_level_id : null,
+                'direction' => $transition->direction,
+                'status' => $this->transitionStatus($transition),
+                'form_schema' => $transition->form_schema,
             ])
             ->values()
             ->all();
@@ -128,13 +114,11 @@ class WorkflowEngine
                 abort(422, 'Transition guard failed.');
             }
 
-            $resolution = $transition
-                ? $this->resolveTransitionAction($instance, $current, $transition, $actionKey)
-                : $this->resolveFallbackAction($instance, $current, $actionKey, $payload);
-
-            if ($resolution === null) {
+            if (!$transition) {
                 abort(422, 'Action is not available for the current workflow level.');
             }
+
+            $resolution = $this->resolveTransitionAction($instance, $current, $transition, $actionKey);
 
             $currentHistory = $this->currentHistory($instance, $current);
             if ($currentHistory) {
@@ -162,7 +146,7 @@ class WorkflowEngine
                 'last_action_at' => now(),
             ];
 
-            if ($actionKey === 'submit' && !$instance->submitted_at) {
+            if (($transition->meta['mark_submitted'] ?? false) || ($actionKey === 'submit' && !$instance->submitted_at)) {
                 $instanceUpdates['submitted_at'] = now();
             }
 
@@ -216,154 +200,22 @@ class WorkflowEngine
         ]);
     }
 
-    protected function fallbackActions(WorkflowInstance $instance, WorkflowLevel $level): array
-    {
-        $status = $instance->status;
-        $next = $this->nextLevel($level);
-        $previous = $this->previousLevel($level);
-        $actions = [];
-
-        if ($status === WorkflowStatuses::ON_HOLD) {
-            return [[
-                'action_key' => 'resume',
-                'to_level_id' => $level->id,
-                'direction' => 'stay',
-                'status' => WorkflowStatuses::IN_PROGRESS,
-            ]];
-        }
-
-        if ($level->is_start && $next) {
-            $actions[] = [
-                'action_key' => 'submit',
-                'to_level_id' => $next->id,
-                'direction' => 'forward',
-                'status' => WorkflowStatuses::IN_PROGRESS,
-            ];
-        } elseif ($next) {
-            $actions[] = [
-                'action_key' => 'approve',
-                'to_level_id' => $next->id,
-                'direction' => 'forward',
-                'status' => WorkflowStatuses::APPROVED,
-            ];
-        }
-
-        if (($level->allow_rejection ?? true) && $previous) {
-            $actions[] = [
-                'action_key' => 'return',
-                'to_level_id' => $previous->id,
-                'direction' => 'backward',
-                'status' => WorkflowStatuses::RETURNED,
-            ];
-
-            $actions[] = [
-                'action_key' => 'reject',
-                'to_level_id' => $previous->id,
-                'direction' => 'backward',
-                'status' => WorkflowStatuses::REJECTED,
-            ];
-        }
-
-        if (!$level->is_terminal) {
-            $actions[] = [
-                'action_key' => 'hold',
-                'to_level_id' => $level->id,
-                'direction' => 'stay',
-                'status' => WorkflowStatuses::ON_HOLD,
-            ];
-        }
-
-        if ($instance->submitted_at && $level->sequence > 1) {
-            $start = $instance->workflow->startLevel() ?? $instance->workflow->levels()->orderBy('sequence')->first();
-            $actions[] = [
-                'action_key' => 'recall',
-                'to_level_id' => $start?->id,
-                'direction' => 'backward',
-                'status' => WorkflowStatuses::RECALLED,
-            ];
-        }
-
-        if ($level->is_terminal || (!$next && ($level->can_close ?? true))) {
-            $actions[] = [
-                'action_key' => 'complete',
-                'to_level_id' => null,
-                'direction' => 'stay',
-                'status' => WorkflowStatuses::COMPLETED,
-            ];
-        }
-
-        return collect($actions)->unique('action_key')->values()->all();
-    }
-
     protected function resolveTransitionAction(
         WorkflowInstance $instance,
         WorkflowLevel $current,
         WorkflowTransition $transition,
         string $actionKey
     ): array {
-        $to = $transition->toLevel()->firstOrFail();
-        $completes = $to->is_terminal || (!$this->nextLevel($to) && ($to->can_close ?? true) && in_array($actionKey, ['approve', 'complete'], true));
+        $to = $transition->to_level_id ? $transition->toLevel()->firstOrFail() : null;
+        $status = $this->transitionStatus($transition);
+        $completes = $status === WorkflowStatuses::COMPLETED
+            || ($to?->is_terminal ?? false)
+            || (($transition->meta['complete'] ?? false) === true);
 
         return [
             'to_level' => $to,
-            'instance_status' => $completes
-                ? WorkflowStatuses::COMPLETED
-                : $this->statusForAction($actionKey, false),
-            'history_status' => $completes
-                ? WorkflowStatuses::COMPLETED
-                : $this->statusForAction($actionKey, false),
-        ];
-    }
-
-    protected function resolveFallbackAction(
-        WorkflowInstance $instance,
-        WorkflowLevel $current,
-        string $actionKey,
-        array $payload = []
-    ): ?array {
-        $fallback = collect($this->fallbackActions($instance, $current))
-            ->firstWhere('action_key', $actionKey);
-
-        if (!$fallback) {
-            return null;
-        }
-
-        $toLevel = $fallback['to_level_id']
-            ? WorkflowLevel::query()->findOrFail($fallback['to_level_id'])
-            : null;
-
-        $instanceStatus = $fallback['status'];
-        $historyStatus = $fallback['status'];
-
-        if ($actionKey === 'submit') {
-            $instanceStatus = WorkflowStatuses::IN_PROGRESS;
-            $historyStatus = WorkflowStatuses::PENDING;
-        }
-
-        if ($actionKey === 'resume') {
-            $instanceStatus = WorkflowStatuses::IN_PROGRESS;
-            $historyStatus = WorkflowStatuses::PENDING;
-        }
-
-        if ($actionKey === 'approve' && $toLevel && ($toLevel->is_terminal || !$this->nextLevel($toLevel))) {
-            $instanceStatus = WorkflowStatuses::COMPLETED;
-            $historyStatus = WorkflowStatuses::COMPLETED;
-        }
-
-        if ($actionKey === 'complete') {
-            $instanceStatus = WorkflowStatuses::COMPLETED;
-            $historyStatus = WorkflowStatuses::COMPLETED;
-            $toLevel = null;
-        }
-
-        if ($actionKey === 'hold') {
-            $toLevel = $current;
-        }
-
-        return [
-            'to_level' => $toLevel,
-            'instance_status' => $instanceStatus,
-            'history_status' => $historyStatus,
+            'instance_status' => $completes ? WorkflowStatuses::COMPLETED : $status,
+            'history_status' => $completes ? WorkflowStatuses::COMPLETED : $status,
         ];
     }
 
@@ -403,38 +255,16 @@ class WorkflowEngine
             ->first();
     }
 
-    protected function nextLevel(WorkflowLevel $level): ?WorkflowLevel
-    {
-        return $level->workflow
-            ? $level->workflow->levels()->where('sequence', '>', $level->sequence)->orderBy('sequence')->first()
-            : WorkflowLevel::query()->where('workflow_id', $level->workflow_id)->where('sequence', '>', $level->sequence)->orderBy('sequence')->first();
-    }
-
-    protected function previousLevel(WorkflowLevel $level): ?WorkflowLevel
-    {
-        return $level->workflow
-            ? $level->workflow->levels()->where('sequence', '<', $level->sequence)->orderByDesc('sequence')->first()
-            : WorkflowLevel::query()->where('workflow_id', $level->workflow_id)->where('sequence', '<', $level->sequence)->orderByDesc('sequence')->first();
-    }
-
     protected function labelFor(string $actionKey): string
     {
         return config('workflows.action_labels.' . $actionKey)
             ?: ucfirst(str_replace('_', ' ', $actionKey));
     }
 
-    protected function statusForAction(string $actionKey, bool $sameLevel = false): string
+    protected function transitionStatus(WorkflowTransition $transition): string
     {
-        return match ($actionKey) {
-            'submit' => WorkflowStatuses::IN_PROGRESS,
-            'approve' => WorkflowStatuses::APPROVED,
-            'reject' => WorkflowStatuses::REJECTED,
-            'return' => WorkflowStatuses::RETURNED,
-            'hold' => WorkflowStatuses::ON_HOLD,
-            'resume' => WorkflowStatuses::IN_PROGRESS,
-            'recall' => WorkflowStatuses::RECALLED,
-            'complete' => WorkflowStatuses::COMPLETED,
-            default => $sameLevel ? WorkflowStatuses::PENDING : WorkflowStatuses::IN_PROGRESS,
-        };
+        return $transition->status
+            ?: data_get($transition->meta, 'status')
+            ?: WorkflowStatuses::IN_PROGRESS;
     }
 }

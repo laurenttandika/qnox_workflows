@@ -11,11 +11,13 @@ return new class extends Migration {
             $t->id();
             $t->foreignId('workflow_id')->constrained();
             $t->foreignId('from_level_id')->constrained('workflow_levels');
-            $t->foreignId('to_level_id')->constrained('workflow_levels');
+            $t->foreignId('to_level_id')->nullable()->constrained('workflow_levels');
             $t->string('action_key');
-            $t->enum('direction', ['forward', 'backward'])->default('forward');
+            $t->string('direction')->default('forward');
             $t->json('guard')->nullable();
             $t->string('label')->nullable();
+            $t->string('status')->nullable();
+            $t->json('meta')->nullable();
             $t->json('form_schema')->nullable();
             $t->timestamps();
 

@@ -1,6 +1,6 @@
 # qnox/workflows
 
-Laravel workflow package shaped around the approval flow used in `IOO-WEB-V2`: applicant/start level, sequential definition-like levels, per-level track history, assignee resolution, and first-class actions such as `submit`, `approve`, `reject`, `return`, `hold`, `resume`, `recall`, and `complete`.
+Laravel workflow package for configurable approval flows with ordered levels, per-level track history, assignee resolution, and setup-driven actions.
 
 ## Install
 ```bash
@@ -24,25 +24,29 @@ $instance = $engine->start($application, $workflow, auth()->user(), [
 ]);
 
 $actions = $engine->availableActions($instance, auth()->user());
-$engine->submit($instance, auth()->user(), ['comment' => 'Submitted to supervisor']);
-$engine->approve($instance->fresh(), auth()->user(), ['comment' => 'Approved']);
+$engine->act($instance, 'submit', auth()->user(), ['comment' => 'Submitted to supervisor']);
 ```
 
-## IOO-WEB-V2 Style Structure
-Create workflows as ordered levels instead of only arbitrary graph edges.
+## Transition Driven Setup
+Actions are configured in `workflow_transitions`. The engine does not generate fallback actions.
 
-- Level 1 should usually represent the applicant or initiator.
-- Set assignment criteria `['initiator' => true]` on the first level to let the submitter own that level.
-- Later levels can use direct assignees or criteria such as `user_ids`, `designation_id`, `department_id`, or permission checks.
-- If you define explicit `workflow_transitions`, they are honored first.
-- If you do not define transitions, the engine falls back to sequential level flow based on `sequence`.
+- Each transition defines `action_key`, `label`, `direction`, `to_level_id`, and optional `status`.
+- `to_level_id` may be `null` for same-level or terminal actions.
+- Use `status` to control the instance/history status after the action.
+- Use `meta.complete = true` to explicitly mark an action as terminal.
+- Use `meta.mark_submitted = true` to stamp `submitted_at` when needed.
+- The first level can still be applicant-owned by using assignment criteria `['initiator' => true]`.
 
-## Lifecycle
-- `submit`: move start/applicant level to the next level
-- `approve`: move forward to the next level
-- `reject`: move backward and mark the instance rejected
-- `return`: move backward for rework
-- `hold`: keep the item on the same level and mark it on hold
-- `resume`: continue a held workflow on the same level
-- `recall`: move the item back toward the start level
-- `complete`: close the workflow
+## Example Transition
+```php
+WorkflowTransition::create([
+    'workflow_id' => $workflow->id,
+    'from_level_id' => $applicantLevel->id,
+    'to_level_id' => $supervisorLevel->id,
+    'action_key' => 'submit',
+    'label' => 'Submit',
+    'direction' => 'forward',
+    'status' => 'in_progress',
+    'meta' => ['mark_submitted' => true],
+]);
+```
