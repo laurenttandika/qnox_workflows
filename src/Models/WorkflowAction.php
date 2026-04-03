@@ -8,7 +8,7 @@ class WorkflowAction extends Model
 {
     protected $fillable = [
         'workflow_instance_id','from_level_id','to_level_id',
-        'actor_type','actor_id','action_key','comment','payload'
+        'actor_type','actor_id','action_key','status','comment','payload'
     ];
     protected $casts = ['payload' => 'array'];
 

@@ -16,7 +16,7 @@ class GuardEvaluator
      * - {"gt": {"context.amount": 1000000}}
      * - {"in": {"context.status": ["A","B"]}}
      */
-    public function passes($guard, WorkflowInstance $instance, User $actor = null, array $payload = []): bool
+    public function passes($guard, WorkflowInstance $instance, ?User $actor = null, array $payload = []): bool
     {
         if (!$guard) return true;
         if (!is_array($guard)) return true; // ignore unknown formats gracefully

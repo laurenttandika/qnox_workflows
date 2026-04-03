@@ -8,5 +8,17 @@ return [
     'assignment_resolver' => Qnox\Workflows\Services\DefaultAssignmentResolver::class,
 
     // Notification channels for next approvers
-    'notify_channels' => ['mail']
+    'notify_channels' => ['mail'],
+
+    // Default action labels used by the IOO-WEB-V2 inspired workflow flow.
+    'action_labels' => [
+        'submit' => 'Submit',
+        'approve' => 'Approve',
+        'reject' => 'Reject',
+        'return' => 'Return',
+        'hold' => 'Hold',
+        'resume' => 'Resume',
+        'recall' => 'Recall',
+        'complete' => 'Complete',
+    ],
 ];

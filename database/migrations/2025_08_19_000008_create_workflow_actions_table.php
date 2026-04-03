@@ -14,6 +14,7 @@ return new class extends Migration {
             $t->foreignId('to_level_id')->nullable()->constrained('workflow_levels');
             $t->morphs('actor');
             $t->string('action_key');
+            $t->string('status')->nullable();
             $t->text('comment')->nullable();
             $t->json('payload')->nullable();
             $t->timestamps();

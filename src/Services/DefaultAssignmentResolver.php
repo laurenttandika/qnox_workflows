@@ -12,6 +12,18 @@ class DefaultAssignmentResolver implements AssignmentResolver
 {
     public function userEligibleForLevel(User $user, WorkflowLevel $level, array $context = []): bool
     {
+        $initiatorId = data_get($context, 'initiator.id');
+        $initiatorType = data_get($context, 'initiator.type');
+
+        if ($initiatorId && $initiatorType === get_class($user)) {
+            foreach ($level->assignments as $a) {
+                $criteria = (array) ($a->criteria ?? []);
+                if (!empty($criteria['initiator']) && (int) $user->getAuthIdentifier() === (int) $initiatorId) {
+                    return true;
+                }
+            }
+        }
+
         // 1) Direct user assignment via morph
         $direct = $level->assignments
             ->first(fn(WorkflowAssignment $a) => $a->assignable_type === get_class($user) && (int)$a->assignable_id === (int)$user->getAuthIdentifier());
@@ -44,10 +56,22 @@ class DefaultAssignmentResolver implements AssignmentResolver
         $userClass = config('workflows.user_model');
 
         foreach ($level->assignments as $a) {
+            $criteria = (array) ($a->criteria ?? []);
+
             if ($a->assignable && $a->assignable instanceof $userClass) {
                 $users->push($a->assignable);
             }
-            $criteria = (array) ($a->criteria ?? []);
+
+            if (!empty($criteria['initiator']) && data_get($context, 'initiator.type') === $userClass) {
+                $initiatorId = data_get($context, 'initiator.id');
+                if ($initiatorId && class_exists($userClass)) {
+                    $initiator = $userClass::query()->find($initiatorId);
+                    if ($initiator) {
+                        $users->push($initiator);
+                    }
+                }
+            }
+
             // Optional: allow explicit user_ids in criteria
             if (!empty($criteria['user_ids']) && class_exists($userClass)) {
                 $users = $users->merge($userClass::query()->whereIn('id', (array)$criteria['user_ids'])->get());

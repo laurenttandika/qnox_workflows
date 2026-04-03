@@ -11,9 +11,13 @@ return new class extends Migration {
             $t->id();
             $t->foreignId('workflow_id')->constrained();
             $t->morphs('subject');
+            $t->nullableMorphs('initiator');
             $t->foreignId('current_level_id')->nullable()->constrained('workflow_levels');
-            $t->string('status')->default('in_progress');
+            $t->string('status')->default('pending');
             $t->json('context')->nullable();
+            $t->timestamp('submitted_at')->nullable();
+            $t->timestamp('completed_at')->nullable();
+            $t->timestamp('last_action_at')->nullable();
             $t->timestamps();
         });
     }

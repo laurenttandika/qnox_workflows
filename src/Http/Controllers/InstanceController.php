@@ -25,6 +25,13 @@ class InstanceController extends Controller
         ]);
 
         $updated = $this->engine->act($instance, $data['action_key'], $request->user(), $data['payload'] ?? []);
-        return response()->json($updated->only(['id','status','current_level_id']));
+        return response()->json($updated->only([
+            'id',
+            'status',
+            'current_level_id',
+            'submitted_at',
+            'completed_at',
+            'last_action_at',
+        ]));
     }
 }
