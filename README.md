@@ -19,6 +19,36 @@ php artisan migrate
 - `WorkflowInstanceLevel`: track/history rows for the running instance
 - `WorkflowAction`: the actions actually taken
 
+## Subject Model
+The workflow instance belongs to a polymorphic `subject`. The subject is the business resource being reviewed or approved.
+
+Examples of a subject:
+- `LeaveRequest`
+- `PurchaseRequisition`
+- `Invoice`
+- `Tender`
+
+The user is not the subject unless the thing being approved is actually a user record.
+
+In this package:
+- `subject` = the resource under workflow
+- `initiator` = the user who started the workflow
+- `actor` = the user who performs an action on a level
+
+The package stores the subject through:
+- `workflow_instances.subject_type`
+- `workflow_instances.subject_id`
+
+Example:
+```php
+$instance = app(WorkflowEngine::class)->start(
+    $purchaseRequisition,   // subject
+    $workflow,
+    auth()->user(),         // initiator
+    ['amount' => $purchaseRequisition->amount]
+);
+```
+
 ## Basic Usage
 ```php
 use Qnox\Workflows\Services\WorkflowEngine;
@@ -211,6 +241,12 @@ $instance = WorkflowInstance::query()
     ->where('subject_id', $application->getKey())
     ->latest('id')
     ->first();
+```
+
+Load the underlying subject resource from the instance:
+
+```php
+$subject = $instance?->subject;
 ```
 
 Get the current level of that instance:
