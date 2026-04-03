@@ -194,6 +194,31 @@ WorkflowTransition::create([
 ]);
 ```
 
+Return or reject to a specific previous level:
+```php
+WorkflowTransition::create([
+    'workflow_id' => $workflow->id,
+    'from_level_id' => $financeLevel->id,
+    'to_level_id' => $applicantLevel->id,
+    'action_key' => 'reject_to_applicant',
+    'label' => 'Reject to Applicant',
+    'direction' => 'backward',
+    'status' => 'rejected',
+]);
+
+WorkflowTransition::create([
+    'workflow_id' => $workflow->id,
+    'from_level_id' => $financeLevel->id,
+    'to_level_id' => $supervisorLevel->id,
+    'action_key' => 'return_to_supervisor',
+    'label' => 'Return to Supervisor',
+    'direction' => 'backward',
+    'status' => 'returned',
+]);
+```
+
+This allows a level to send the workflow back to any earlier level, not only the immediately previous one.
+
 ## Retrieve Configured Flows
 Get all workflow definitions:
 
