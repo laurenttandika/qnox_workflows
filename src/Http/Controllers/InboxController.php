@@ -37,7 +37,15 @@ class InboxController extends Controller
         return view(config('workflows.views.instance'), [
             'instance' => $instance,
             'actions' => $this->engine->availableActions($instance, request()->user()),
+            'canClaim' => $this->inbox->canClaim($instance, request()->user()),
         ]);
+    }
+
+    public function claim(WorkflowInstance $instance)
+    {
+        $this->inbox->claim($instance, request()->user());
+
+        return back()->with('workflow_status', 'Workflow item attended and assigned to you.');
     }
 
     public function counts()

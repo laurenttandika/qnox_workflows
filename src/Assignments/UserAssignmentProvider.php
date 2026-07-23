@@ -25,7 +25,7 @@ class UserAssignmentProvider implements AssignmentProvider
         }
 
         if (data_get($assignment->criteria, 'initiator')
-            && data_get($context, 'initiator.type') === $userClass
+            && in_array(data_get($context, 'initiator.type'), [$userClass, $userMorphClass], true)
             && data_get($context, 'initiator.id')) {
             $initiator = $userClass::query()->find(data_get($context, 'initiator.id'));
             if ($initiator) {

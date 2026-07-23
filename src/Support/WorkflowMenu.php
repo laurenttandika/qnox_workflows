@@ -30,6 +30,7 @@ class WorkflowMenu
                 ['label' => 'Module Groups', 'route' => self::route('groups.index')],
                 ['label' => 'Modules', 'route' => self::route('modules.index')],
                 ['label' => 'Definitions', 'route' => self::route('definitions.index')],
+                ['label' => 'Workflow Permissions', 'route' => self::route('participants.index')],
                 ['label' => 'Number Formats', 'route' => self::route('numbers.index')],
             ],
         ]];

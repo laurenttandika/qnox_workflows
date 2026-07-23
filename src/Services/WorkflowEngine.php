@@ -4,7 +4,6 @@ namespace Qnox\Workflows\Services;
 
 use Illuminate\Contracts\Auth\Authenticatable as User;
 use Illuminate\Database\DatabaseManager as DB;
-use Qnox\Workflows\Contracts\AssignmentResolver;
 use Qnox\Workflows\Models\Workflow;
 use Qnox\Workflows\Models\WorkflowAction;
 use Qnox\Workflows\Models\WorkflowInstance;
@@ -32,9 +31,9 @@ class WorkflowEngine
 {
     public function __construct(
         protected DB $db,
-        protected AssignmentResolver $resolver,
         protected GuardEvaluator $guards,
         protected WorkflowInbox $inbox,
+        protected WorkflowParticipation $participation,
     ) {}
 
     public function start($subject, Workflow $workflow, User $initiator, array $context = []): WorkflowInstance
@@ -45,9 +44,9 @@ class WorkflowEngine
         return $this->db->transaction(function () use ($subject, $workflow, $start, $initiator, $context) {
             $pending = new WorkflowInstance([
                 'workflow_id' => $workflow->id,
-                'subject_type' => get_class($subject),
+                'subject_type' => $this->morphType($subject),
                 'subject_id' => $subject->getKey(),
-                'initiator_type' => get_class($initiator),
+                'initiator_type' => $this->morphType($initiator),
                 'initiator_id' => $initiator->getAuthIdentifier(),
                 'current_level_id' => $start->id,
                 'status' => WorkflowStatuses::PENDING,
@@ -57,9 +56,9 @@ class WorkflowEngine
 
             $instance = WorkflowInstance::create([
                 'workflow_id' => $workflow->id,
-                'subject_type' => get_class($subject),
+                'subject_type' => $this->morphType($subject),
                 'subject_id' => $subject->getKey(),
-                'initiator_type' => get_class($initiator),
+                'initiator_type' => $this->morphType($initiator),
                 'initiator_id' => $initiator->getAuthIdentifier(),
                 'current_level_id' => $start->id,
                 'status' => WorkflowStatuses::PENDING,
@@ -68,7 +67,7 @@ class WorkflowEngine
 
             $history = $this->createHistoryEntry($instance, $start, WorkflowStatuses::PENDING);
             $this->inbox->createForLevel($instance->loadMissing('workflow'), $history, $start);
-            $this->notifyNextApprovers($instance, $start);
+            $this->notifyNextApprovers($instance, $start, $history);
 
             $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level']);
             $this->afterCommit(fn () => event(new WorkflowStarted($result, $initiator, null, $context)));
@@ -108,7 +107,7 @@ class WorkflowEngine
     {
         $level = $instance->currentLevel()->with(['outgoingTransitions', 'assignments'])->firstOrFail();
 
-        if (!$this->resolver->userEligibleForLevel($actor, $level, $instance->context ?? [])) {
+        if (!$this->actorCanAct($instance, $level, $actor)) {
             return [];
         }
 
@@ -135,7 +134,7 @@ class WorkflowEngine
             /** @var WorkflowLevel $current */
             $current = WorkflowLevel::query()->with(['assignments', 'outgoingTransitions'])->lockForUpdate()->findOrFail($instance->current_level_id);
 
-            if (!$this->resolver->userEligibleForLevel($actor, $current, $instance->context ?? [])) {
+            if (!$this->actorCanAct($instance, $current, $actor)) {
                 abort(403, 'Not eligible for this level.');
             }
 
@@ -153,26 +152,30 @@ class WorkflowEngine
             event(new WorkflowActioning($instance, $actor, $transition, $payload));
 
             $resolution = $this->resolveTransitionAction($instance, $current, $transition, $actionKey);
+            $leavesLevel = $resolution['to_level'] !== null
+                || $resolution['instance_status'] === WorkflowStatuses::COMPLETED;
 
             $currentHistory = $this->currentHistory($instance, $current);
-            if ($currentHistory) {
+            if ($currentHistory && $leavesLevel) {
                 $currentHistory->update([
                     'exited_at' => now(),
                     'forward_date' => now(),
                 ]);
             }
-            $this->afterCommit(fn () => event(new WorkflowLevelExited(
-                $instance->fresh(['currentLevel', 'workflow.module']),
-                $actor,
-                $transition,
-                $payload
-            )));
+            if ($leavesLevel) {
+                $this->afterCommit(fn () => event(new WorkflowLevelExited(
+                    $instance->fresh(['currentLevel', 'workflow.module']),
+                    $actor,
+                    $transition,
+                    $payload
+                )));
+            }
 
             $action = WorkflowAction::create([
                 'workflow_instance_id' => $instance->id,
                 'from_level_id' => $current->id,
                 'to_level_id' => $resolution['to_level']?->id,
-                'actor_type' => get_class($actor),
+                'actor_type' => $this->morphType($actor),
                 'actor_id' => $actor->getAuthIdentifier(),
                 'action_key' => $actionKey,
                 'status' => $resolution['instance_status'],
@@ -180,8 +183,10 @@ class WorkflowEngine
                 'payload' => $payload,
             ]);
 
-            if ($currentHistory) {
+            if ($currentHistory && $leavesLevel) {
                 $this->inbox->closeLevel($currentHistory, $actor, $action);
+            } elseif ($currentHistory) {
+                $this->inbox->recordResponse($currentHistory, $actor, $action);
             }
 
             $instanceUpdates = [
@@ -207,7 +212,8 @@ class WorkflowEngine
                     $resolution['history_status'],
                     $currentHistory,
                     $actionKey,
-                    $payload['comment'] ?? $payload['comments'] ?? null
+                    $payload['comment'] ?? $payload['comments'] ?? null,
+                    $payload['next_user_id'] ?? null
                 );
                 $this->inbox->createForLevel(
                     $instance->fresh()->loadMissing('workflow'),
@@ -216,7 +222,11 @@ class WorkflowEngine
                 );
 
                 if (!in_array($resolution['instance_status'], [WorkflowStatuses::COMPLETED, WorkflowStatuses::ON_HOLD], true)) {
-                    $this->notifyNextApprovers($instance->fresh(['currentLevel', 'workflow']), $resolution['to_level']);
+                    $this->notifyNextApprovers(
+                        $instance->fresh(['currentLevel', 'workflow']),
+                        $resolution['to_level'],
+                        $nextHistory
+                    );
                 }
             } elseif ($currentHistory) {
                 $currentHistory->update([
@@ -245,9 +255,20 @@ class WorkflowEngine
         });
     }
 
-    public function notifyNextApprovers(WorkflowInstance $instance, WorkflowLevel $level): void
+    public function notifyNextApprovers(
+        WorkflowInstance $instance,
+        WorkflowLevel $level,
+        ?WorkflowInstanceLevel $history = null
+    ): void
     {
-        $assignees = $this->resolver->resolveAssignees($level, $instance->context ?? []);
+        $assignees = $this->participation->eligibleUsers($level, $instance->context ?? []);
+
+        if ($level->assignment_mode !== 'pooled' && $history?->assigned_to_id) {
+            $assignees = $assignees->filter(fn ($user) =>
+                $this->morphType($user) === $history->assigned_to_type
+                && (string) $user->getAuthIdentifier() === (string) $history->assigned_to_id
+            );
+        }
 
         foreach ($assignees as $notifiable) {
             $notifiable->notify(new \Qnox\Workflows\Notifications\NextApproverNotification($instance->fresh(['currentLevel'])));
@@ -259,7 +280,7 @@ class WorkflowEngine
         return array_replace_recursive($context, [
             'initiator' => [
                 'id' => $initiator->getAuthIdentifier(),
-                'type' => get_class($initiator),
+                'type' => $this->morphType($initiator),
             ],
         ]);
     }
@@ -289,14 +310,30 @@ class WorkflowEngine
         string $status,
         ?WorkflowInstanceLevel $parent = null,
         ?string $actionKey = null,
-        ?string $comments = null
+        ?string $comments = null,
+        int|string|null $preferredUserId = null
     ): WorkflowInstanceLevel {
-        $assignee = $this->resolver->resolveAssignees($level, $instance->context ?? [])->first();
+        $eligible = $this->participation->eligibleUsers($level, $instance->context ?? []);
+        if ($eligible->isEmpty()) {
+            abort(422, "No eligible participants are configured for workflow level [{$level->name}].");
+        }
+        $preferredUserId ??= data_get($instance->context, 'next_user_id');
+        $assignee = match ($level->assignment_mode) {
+            'pooled' => null,
+            'direct' => $eligible->first(fn ($user) =>
+                (string) $user->getAuthIdentifier() === (string) $preferredUserId
+            ),
+            default => $eligible->first(),
+        };
+
+        if ($level->assignment_mode === 'direct' && !$assignee) {
+            abort(422, 'A permitted next user is required for the direct-assignment level.');
+        }
 
         return $instance->history()->create([
             'workflow_level_id' => $level->id,
             'parent_id' => $parent?->id,
-            'assigned_to_type' => $assignee ? get_class($assignee) : null,
+            'assigned_to_type' => $assignee ? $this->morphType($assignee) : null,
             'assigned_to_id' => $assignee?->getAuthIdentifier(),
             'status' => $status,
             'action_key' => $actionKey,
@@ -357,5 +394,34 @@ class WorkflowEngine
             default => null,
             },
         };
+    }
+
+    protected function actorCanAct(
+        WorkflowInstance $instance,
+        WorkflowLevel $level,
+        User $actor
+    ): bool {
+        $eligible = $this->participation->eligibleUsers($level, $instance->context ?? []);
+        $isEligible = $eligible->contains(fn ($user) =>
+            $this->morphType($user) === $this->morphType($actor)
+            && (string) $user->getAuthIdentifier() === (string) $actor->getAuthIdentifier()
+        );
+
+        if (!$isEligible || !$this->participation->can($actor, $level, 'can_act', $instance->context ?? [])) {
+            return false;
+        }
+
+        $track = $this->currentHistory($instance, $level);
+        if (!$track?->assigned_to_id) {
+            return false;
+        }
+
+        return $track->assigned_to_type === $this->morphType($actor)
+            && (string) $track->assigned_to_id === (string) $actor->getAuthIdentifier();
+    }
+
+    protected function morphType(object $model): string
+    {
+        return method_exists($model, 'getMorphClass') ? $model->getMorphClass() : get_class($model);
     }
 }

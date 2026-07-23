@@ -10,6 +10,7 @@ class WorkflowLevel extends Model
         'workflow_id',
         'name',
         'sequence',
+        'assignment_mode',
         'is_start',
         'is_terminal',
         'rules',
@@ -46,6 +47,10 @@ class WorkflowLevel extends Model
     public function assignments()
     {
         return $this->hasMany(WorkflowAssignment::class);
+    }
+    public function participants()
+    {
+        return $this->hasMany(WorkflowLevelParticipant::class);
     }
     public function outgoingTransitions()
     {

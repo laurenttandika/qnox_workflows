@@ -23,8 +23,14 @@ Route::prefix(config('workflows.routes.web.prefix', 'settings/workflows'))
         Route::post('/definitions', [SettingsController::class, 'storeDefinition'])->name('definitions.store');
         Route::get('/definitions/{workflow}', [SettingsController::class, 'definition'])->name('definitions.show');
         Route::post('/definitions/{workflow}/levels', [SettingsController::class, 'storeLevel'])->name('definitions.levels.store');
+        Route::put('/definitions/{workflow}/levels/{level}', [SettingsController::class, 'updateLevel'])->name('definitions.levels.update');
         Route::post('/definitions/{workflow}/assignments', [SettingsController::class, 'storeAssignment'])->name('definitions.assignments.store');
+        Route::post('/definitions/{workflow}/participants', [SettingsController::class, 'storeParticipant'])->name('definitions.participants.store');
         Route::post('/definitions/{workflow}/transitions', [SettingsController::class, 'storeTransition'])->name('definitions.transitions.store');
+
+        Route::get('/participants', [SettingsController::class, 'participants'])->name('participants.index');
+        Route::get('/participants/users/{user}', [SettingsController::class, 'userPermissions'])->name('participants.user');
+        Route::put('/participants/users/{user}', [SettingsController::class, 'updateUserPermissions'])->name('participants.user.update');
 
         Route::get('/numbers', [SettingsController::class, 'numbers'])->name('numbers.index');
         Route::post('/numbers', [SettingsController::class, 'storeNumber'])->name('numbers.store');
@@ -43,6 +49,7 @@ if (config('workflows.routes.inbox.enabled', true)) {
             Route::get('/', [InboxController::class, 'index'])->name('index');
             Route::get('/counts', [InboxController::class, 'counts'])->name('counts');
             Route::get('/item/{instance}', [InboxController::class, 'show'])->name('show');
+            Route::post('/item/{instance}/claim', [InboxController::class, 'claim'])->name('claim');
             foreach (['new', 'pending', 'attended', 'responded', 'held', 'ended'] as $category) {
                 Route::get("/{$category}", [InboxController::class, 'index'])
                     ->defaults('category', $category)

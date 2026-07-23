@@ -17,7 +17,9 @@ class DefaultAssignmentResolver implements AssignmentResolver
         $initiatorId = data_get($context, 'initiator.id');
         $initiatorType = data_get($context, 'initiator.type');
 
-        if ($initiatorId && $initiatorType === get_class($user)) {
+        $userType = method_exists($user, 'getMorphClass') ? $user->getMorphClass() : get_class($user);
+
+        if ($initiatorId && in_array($initiatorType, [get_class($user), $userType], true)) {
             foreach ($level->assignments as $a) {
                 $criteria = (array) ($a->criteria ?? []);
                 if (!empty($criteria['initiator']) && (int) $user->getAuthIdentifier() === (int) $initiatorId) {
@@ -28,7 +30,10 @@ class DefaultAssignmentResolver implements AssignmentResolver
 
         // 1) Direct user assignment via morph
         $direct = $level->assignments
-            ->first(fn(WorkflowAssignment $a) => $a->assignable_type === get_class($user) && (int)$a->assignable_id === (int)$user->getAuthIdentifier());
+            ->first(fn(WorkflowAssignment $a) =>
+                in_array($a->assignable_type, [get_class($user), $userType], true)
+                && (int) $a->assignable_id === (int) $user->getAuthIdentifier()
+            );
         if ($direct) return true;
 
         // 2) Criteria-based (very generic). Example keys: permissions, department_id, designation_id, region_code.

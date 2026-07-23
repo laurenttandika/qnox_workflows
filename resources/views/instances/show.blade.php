@@ -8,6 +8,13 @@
     </div>
     <div class="card">
         <h2>Available actions</h2>
+        @if($canClaim ?? false)
+            <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'inbox.claim', $instance) }}" style="margin-bottom:1rem">
+                @csrf
+                <button type="submit">Attend this workflow</button>
+            </form>
+            <p class="muted">This item is in a shared queue. Attend it before performing workflow actions.</p>
+        @endif
         @include(config('workflows.views.actions'), compact('instance', 'actions'))
         @if(empty($actions))<p class="muted">There are no actions available to you at this level.</p>@endif
     </div>

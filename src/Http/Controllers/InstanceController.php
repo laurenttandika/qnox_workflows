@@ -24,6 +24,7 @@ class InstanceController extends Controller
         return view(config('workflows.views.instance'), [
             'instance' => $instance,
             'actions' => $this->engine->availableActions($instance, request()->user()),
+            'canClaim' => $this->inbox->canClaim($instance, request()->user()),
         ]);
     }
 

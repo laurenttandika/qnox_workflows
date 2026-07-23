@@ -15,6 +15,16 @@ return [
         // 'position' => ['label' => 'Position', 'model' => App\Models\Position::class],
         // 'unit' => ['label' => 'Unit', 'model' => App\Models\Department::class],
     ],
+    'participant_options' => [
+        'user' => [
+            'label' => 'User',
+            'model' => App\Models\User::class,
+        ],
+        // Non-user participant types require a participant provider.
+    ],
+    'participant_providers' => [
+        'user' => Qnox\Workflows\Participants\UserParticipantProvider::class,
+    ],
     'notify_channels' => ['mail'],
 
     'routes' => [
@@ -44,6 +54,8 @@ return [
         'modules' => 'workflows::settings.modules',
         'definitions' => 'workflows::settings.definitions',
         'definition' => 'workflows::settings.definition',
+        'participants' => 'workflows::settings.participants',
+        'user_permissions' => 'workflows::settings.user-permissions',
         'numbers' => 'workflows::settings.numbers',
         'instance' => 'workflows::instances.show',
         'actions' => 'workflows::actions.buttons',

@@ -15,6 +15,7 @@
     <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'groups.index') }}">Module Groups</a>
     <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'modules.index') }}">Modules</a>
     <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.index') }}">Definitions</a>
+    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'participants.index') }}">Workflow Permissions</a>
     <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'numbers.index') }}">Number Formats</a>
 </nav>
 @if(session('workflow_status')) <div class="status">{{ session('workflow_status') }}</div> @endif

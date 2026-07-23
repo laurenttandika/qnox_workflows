@@ -583,6 +583,7 @@ Version 1 dispatches:
 - `WorkflowActioned`
 - `WorkflowLevelEntered`
 - `WorkflowLevelExited`
+- `WorkflowClaimed`
 - `WorkflowCompleted`
 - `WorkflowRejected`
 - `WorkflowReturned`
@@ -694,6 +695,129 @@ Relation::enforceMorphMap([
     'unit' => Department::class,
     'payment-requisition' => PaymentRequisition::class,
 ]);
+```
+
+## Level Participation and Assignment Modes
+
+Participation permissions and routing assignments are separate:
+
+- `WorkflowLevelParticipant` answers who is permitted to view, attend, or act at a level.
+- `WorkflowAssignment` answers where a particular workflow item is routed.
+- `WorkflowInstanceLevel::assigned_to` records who owns the current track.
+
+When both participant permissions and routing assignments exist, recipients are the
+intersection:
+
+```text
+Users resolved from the routed unit/department
+∩
+Users permitted for the workflow level
+=
+Users who receive the workflow item
+```
+
+If a level has no participant permissions, its existing assignments remain the
+eligibility source for backward compatibility.
+
+Each level has one assignment mode:
+
+```text
+pooled
+automatic
+direct
+```
+
+### Pooled
+
+The track enters the level without an owner. All eligible users receive a New inbox item.
+The first authorized user to select **Attend this workflow** atomically claims it.
+Other participants' inbox entries close, and only the claiming user may act.
+
+```php
+$level->update(['assignment_mode' => 'pooled']);
+```
+
+Claim route:
+
+```text
+POST workflows.inbox.claim
+```
+
+The claim operation locks the active `WorkflowInstanceLevel`, so two users cannot claim
+the same item.
+
+### Automatic
+
+The first eligible resolved user is assigned immediately. Only that user receives the
+active inbox item and may act.
+
+```php
+$level->update(['assignment_mode' => 'automatic']);
+```
+
+### Direct
+
+The current action must provide `payload.next_user_id`. The selected user must satisfy
+both routing and level-participation rules.
+
+```php
+'form_schema' => [
+    'fields' => [
+        [
+            'name' => 'next_user_id',
+            'type' => 'number',
+            'label' => 'Next user ID',
+            'required' => true,
+        ],
+    ],
+],
+```
+
+The engine rejects a direct transition when the selected user is not eligible.
+
+## User Workflow Permissions
+
+The package includes the equivalent of IOO-WEB-V2's User → Workflow Permissions screen:
+
+```text
+/settings/workflows/participants
+/settings/workflows/participants/users/{user}
+```
+
+Named routes:
+
+```text
+workflows.participants.index
+workflows.participants.user
+workflows.participants.user.update
+```
+
+Link to it from an existing user-management screen:
+
+```blade
+<a href="{{ route('workflows.participants.user', $user->getAuthIdentifier()) }}">
+    Workflow Permissions
+</a>
+```
+
+The administrator can grant a user access to individual workflow levels. Definition
+screens also provide participant configuration with separate View, Attend, and Act
+permissions.
+
+Non-user participant types such as positions and units use providers:
+
+```php
+'participant_options' => [
+    'user' => ['label' => 'User', 'model' => App\Models\User::class],
+    'position' => ['label' => 'Position', 'model' => App\Models\Position::class],
+    'unit' => ['label' => 'Unit', 'model' => App\Models\Department::class],
+],
+
+'participant_providers' => [
+    'user' => UserParticipantProvider::class,
+    'position' => App\Workflows\PositionParticipantProvider::class,
+    'unit' => App\Workflows\UnitParticipantProvider::class,
+],
 ```
 
 ## Configurable Number Generation
@@ -821,9 +945,13 @@ To render package actions inside a custom resource view:
 2. Create assignments for the start and approval levels.
 3. Start a workflow using `startWorkflow()` or `WorkflowEngine::start()`.
 4. Sign in as the resolved approver and open `/workflows/inbox/new`.
-5. Opening the item moves it from `new` to `attended`.
-6. Perform an action from the generated modal.
-7. Confirm the item appears under `responded` and the next approver receives a `new` item.
-8. Complete the workflow and confirm it appears under `ended`.
-9. Create a number format under Workflow Settings → Number Formats.
-10. Generate several numbers and confirm padding and reset behavior.
+5. For a pooled level, confirm all eligible participants see New, then click Attend.
+6. Confirm the item disappears from the other participants and only the claimant can act.
+7. For an automatic level, confirm only the resolved owner receives the item.
+8. For a direct level, select an eligible `next_user_id` and confirm invalid users are rejected.
+9. Opening an owned item moves it from `new` to `attended`.
+10. Perform an action from the generated modal.
+11. Confirm the item appears under `responded` and the next approver receives a `new` item.
+12. Complete the workflow and confirm it appears under `ended`.
+13. Create a number format under Workflow Settings → Number Formats.
+14. Generate several numbers and confirm padding and reset behavior.
