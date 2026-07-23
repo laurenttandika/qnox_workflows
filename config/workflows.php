@@ -1,16 +1,55 @@
 <?php
 
 return [
-    // Fully qualified class name of your User model
     'user_model' => App\Models\User::class,
-
-    // Bind a custom resolver here if you replace the default
     'assignment_resolver' => Qnox\Workflows\Services\DefaultAssignmentResolver::class,
-
-    // Notification channels for next approvers
+    'assignment_providers' => [
+        'user' => Qnox\Workflows\Assignments\UserAssignmentProvider::class,
+    ],
     'notify_channels' => ['mail'],
 
-    // Default action labels. Transitions may still override these with their own label.
+    'routes' => [
+        'web' => [
+            'enabled' => true,
+            'prefix' => 'settings/workflows',
+            'name_prefix' => 'workflows.',
+            'middleware' => ['web', 'auth'],
+        ],
+        'api' => [
+            'enabled' => true,
+            'legacy_routes' => true,
+            'prefix' => 'api/workflows',
+            'middleware' => ['api', 'auth:sanctum'],
+        ],
+    ],
+
+    'views' => [
+        'layout' => null,
+        'dashboard' => 'workflows::settings.dashboard',
+        'groups' => 'workflows::settings.groups',
+        'modules' => 'workflows::settings.modules',
+        'definitions' => 'workflows::settings.definitions',
+        'definition' => 'workflows::settings.definition',
+        'numbers' => 'workflows::settings.numbers',
+        'instance' => 'workflows::instances.show',
+        'actions' => 'workflows::actions.buttons',
+        'action_modal' => 'workflows::actions.modal',
+    ],
+
+    'permissions' => [
+        'view' => 'workflows.view',
+        'manage' => 'workflows.manage',
+        'act' => 'workflows.act',
+    ],
+
+    'numbering' => [
+        'default_padding' => 6,
+        'allowed_tokens' => [
+            'prefix', 'number', 'year', 'month', 'day', 'module',
+            'department', 'unit', 'tenant', 'subject_id',
+        ],
+    ],
+
     'action_labels' => [
         'submit' => 'Submit',
         'approve' => 'Approve',

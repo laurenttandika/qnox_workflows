@@ -11,6 +11,16 @@ class InstanceController extends Controller
 {
     public function __construct(protected WorkflowEngine $engine) {}
 
+    public function show(WorkflowInstance $instance)
+    {
+        $instance->load(['workflow.module', 'currentLevel', 'history.level', 'actions']);
+
+        return view(config('workflows.views.instance'), [
+            'instance' => $instance,
+            'actions' => $this->engine->availableActions($instance, request()->user()),
+        ]);
+    }
+
     public function actions(WorkflowInstance $instance)
     {
         $actions = $this->engine->availableActions($instance, request()->user());
@@ -25,13 +35,19 @@ class InstanceController extends Controller
         ]);
 
         $updated = $this->engine->act($instance, $data['action_key'], $request->user(), $data['payload'] ?? []);
-        return response()->json($updated->only([
+        $response = $updated->only([
             'id',
             'status',
             'current_level_id',
             'submitted_at',
             'completed_at',
             'last_action_at',
-        ]));
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json($response);
+        }
+
+        return back()->with('workflow_status', 'Workflow action completed.');
     }
 }

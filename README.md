@@ -7,8 +7,31 @@ Laravel workflow package for configurable approval flows with ordered levels, pe
 composer require qnox/workflows
 php artisan vendor:publish --tag=qnox-workflows-config
 php artisan vendor:publish --tag=qnox-workflows-migrations
+php artisan vendor:publish --tag=qnox-workflows-views # only when overriding UI
 php artisan migrate
 ```
+
+After installation, the default settings dashboard is:
+
+```text
+/settings/workflows
+```
+
+The prefix, middleware, route names, API routes, and every package view are configurable
+in `config/workflows.php`.
+
+For production, add your authorization middleware to the settings route group:
+
+```php
+'routes' => [
+    'web' => [
+        'middleware' => ['web', 'auth', 'can:workflows.manage'],
+    ],
+],
+```
+
+Define the `workflows.manage` ability with a Laravel gate or create the equivalent
+permission when using `spatie/laravel-permission`.
 
 ## Concepts
 - `Workflow`: the whole process definition
@@ -311,8 +334,13 @@ $updated = app(WorkflowEngine::class)->act(
 ## API Routes
 The package registers:
 
+- `GET /api/workflows/instances/{instance}/actions`
+- `POST /api/workflows/instances/{instance}/act`
 - `GET /api/workflow-instances/{instance}/actions`
 - `POST /api/workflow-instances/{instance}/act`
+
+The last two endpoints are v0 compatibility aliases and can be disabled with
+`workflows.routes.api.legacy_routes`.
 
 Example POST payload:
 
@@ -339,3 +367,322 @@ Common values are:
 - `completed`
 
 You may also use your own status values in transitions if your application needs different labels.
+
+## Version 1 Administration
+
+Version 1 provides web configuration screens for:
+
+- Module groups
+- Business modules
+- Workflow definitions
+- Ordered workflow levels
+- Configured actions and transitions
+- Number formats and sequences
+- Workflow instance history and action modals
+
+Add the settings link to a Blade menu:
+
+```blade
+@can('workflows.manage')
+    <a href="{{ route('workflows.dashboard') }}">Workflow Settings</a>
+@endcan
+```
+
+For applications with a menu registry:
+
+```php
+use Qnox\Workflows\Support\WorkflowMenu;
+
+$menu->register(WorkflowMenu::items());
+```
+
+The package does not mutate the host application's navigation. This keeps it compatible
+with Blade sidebars, AdminLTE, Spatie menus, Livewire navigation, and custom menu tables.
+
+## Modules and Groups
+
+`WorkflowGroup` organizes related business functions. `WorkflowModule` represents a
+business process, and `Workflow` represents one executable definition.
+
+```php
+$group = WorkflowGroup::create([
+    'name' => 'Finance',
+    'slug' => 'finance',
+]);
+
+$module = WorkflowModule::create([
+    'workflow_group_id' => $group->id,
+    'name' => 'Payment Requisitions',
+    'slug' => 'payment-requisitions',
+]);
+
+$workflow = Workflow::create([
+    'workflow_group_id' => $group->id,
+    'workflow_module_id' => $module->id,
+    'name' => 'Standard Payment Approval',
+    'slug' => 'standard-payment-approval',
+    'is_active' => true,
+]);
+```
+
+A module may be attached to application configuration through `moduleable_type` and
+`moduleable_id`, for example a `PaymentRequisitionType`.
+
+## Model Integration
+
+Add `HasWorkflows` to resources that participate in workflows:
+
+```php
+use Qnox\Workflows\Concerns\HasWorkflows;
+
+class PaymentRequisition extends Model
+{
+    use HasWorkflows;
+}
+```
+
+Then start and retrieve workflows through the resource:
+
+```php
+$instance = $requisition->startWorkflow(
+    $workflow,
+    auth()->user(),
+    [
+        'amount' => $requisition->amount,
+        'department_id' => $requisition->department_id,
+    ],
+);
+
+$current = $requisition->currentWorkflowInstance();
+```
+
+## Lifecycle Events
+
+Version 1 dispatches:
+
+- `WorkflowStarting`
+- `WorkflowStarted`
+- `WorkflowActioning`
+- `WorkflowActioned`
+- `WorkflowLevelEntered`
+- `WorkflowLevelExited`
+- `WorkflowCompleted`
+- `WorkflowRejected`
+- `WorkflowReturned`
+- `WorkflowHeld`
+- `WorkflowResumed`
+- `WorkflowRecalled`
+
+The `Starting` and `Actioning` events run synchronously and may stop the operation by
+throwing an exception. All other events are registered after the workflow database
+transaction commits.
+
+Application-specific behavior belongs in listeners:
+
+```php
+use Qnox\Workflows\Events\WorkflowCompleted;
+
+class MarkPaymentApproved
+{
+    public function handle(WorkflowCompleted $event): void
+    {
+        $payment = $event->instance->subject;
+
+        if ($payment instanceof PaymentRequisition) {
+            $payment->update([
+                'status' => 'approved',
+                'approved_at' => now(),
+            ]);
+        }
+    }
+}
+```
+
+Register it in the host application's event provider:
+
+```php
+protected $listen = [
+    WorkflowCompleted::class => [
+        MarkPaymentApproved::class,
+    ],
+];
+```
+
+This replaces the large module-ID `switch` subscriber used by IOO-WEB-V2.
+
+## Polymorphic Assignments
+
+Assignments may target any model:
+
+```php
+WorkflowAssignment::create([
+    'workflow_level_id' => $level->id,
+    'type' => 'position',
+    'assignable_type' => Position::class,
+    'assignable_id' => $position->id,
+]);
+```
+
+The host application teaches the package how to resolve that model:
+
+```php
+use Qnox\Workflows\Contracts\AssignmentProvider;
+
+class PositionAssignmentProvider implements AssignmentProvider
+{
+    public function users(WorkflowAssignment $assignment, array $context = []): Collection
+    {
+        return User::where('position_id', $assignment->assignable_id)->get();
+    }
+
+    public function contains(
+        Authenticatable $user,
+        WorkflowAssignment $assignment,
+        array $context = []
+    ): bool {
+        return (string) $user->position_id === (string) $assignment->assignable_id;
+    }
+}
+```
+
+Register providers in the published configuration:
+
+```php
+'assignment_providers' => [
+    'user' => UserAssignmentProvider::class,
+    'position' => App\Workflows\PositionAssignmentProvider::class,
+    'designation' => App\Workflows\DesignationAssignmentProvider::class,
+    'unit' => App\Workflows\UnitAssignmentProvider::class,
+    'department' => App\Workflows\DepartmentAssignmentProvider::class,
+],
+```
+
+Use a morph map to avoid storing application class names:
+
+```php
+Relation::enforceMorphMap([
+    'user' => User::class,
+    'position' => Position::class,
+    'unit' => Department::class,
+    'payment-requisition' => PaymentRequisition::class,
+]);
+```
+
+## Configurable Number Generation
+
+Number sequences replace the IOO sysdef/table-name switch with editable formats and
+atomic counters.
+
+```php
+NumberSequence::create([
+    'key' => 'payment-requisition',
+    'name' => 'Payment Requisition Number',
+    'format' => '{prefix}/{year}/{number}',
+    'prefix' => 'QNOX/PR',
+    'next_value' => 1,
+    'padding' => 6,
+    'reset_period' => 'yearly',
+    'is_active' => true,
+]);
+```
+
+Generate a number:
+
+```php
+$number = app(NumberGenerator::class)->next('payment-requisition');
+// QNOX/PR/2026/000001
+```
+
+Or use the model convenience trait:
+
+```php
+use Qnox\Workflows\Concerns\HasWorkflowNumber;
+
+class PaymentRequisition extends Model
+{
+    use HasWorkflowNumber;
+}
+
+$number = $payment->generateWorkflowNumber('payment-requisition');
+```
+
+Supported format tokens are:
+
+```text
+{prefix} {number} {year} {year:2} {month} {day}
+{module} {department} {unit} {tenant} {subject_id}
+```
+
+Custom tokens receive their values from context:
+
+```php
+$number = app(NumberGenerator::class)->next('department-document', [
+    'department' => 'FIN',
+    'module' => 'PR',
+]);
+```
+
+Valid reset periods are `never`, `yearly`, `monthly`, and `daily`. Generation uses a
+database transaction and `lockForUpdate()`, preventing duplicate numbers under
+concurrent requests.
+
+Scoped counters are supported:
+
+```php
+$number = app(NumberGenerator::class)->next(
+    'payment-requisition',
+    ['department' => $department->code],
+    $department,
+);
+```
+
+Create one `NumberSequence` record for each scope. The scope is stored polymorphically.
+
+## Custom Views and Action Modals
+
+Views load under the `workflows::` namespace. Override a screen without publishing:
+
+```php
+'views' => [
+    'instance' => 'payments.workflows.show',
+    'action_modal' => 'payments.workflows.action-modal',
+],
+```
+
+Or publish all views:
+
+```bash
+php artisan vendor:publish --tag=qnox-workflows-views
+```
+
+Published files are written to:
+
+```text
+resources/views/vendor/workflows
+```
+
+Action modals are generated from `WorkflowTransition::form_schema`:
+
+```php
+'form_schema' => [
+    'confirmation' => 'Approve and forward this request?',
+    'fields' => [
+        [
+            'name' => 'comment',
+            'type' => 'textarea',
+            'label' => 'Comments',
+            'required' => true,
+        ],
+    ],
+],
+```
+
+To render package actions inside a custom resource view:
+
+```blade
+@include('workflows::actions.buttons', [
+    'instance' => $instance,
+    'actions' => app(WorkflowEngine::class)
+        ->availableActions($instance, auth()->user()),
+])
+```

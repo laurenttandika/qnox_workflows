@@ -10,6 +10,8 @@ use Qnox\Workflows\Models\{WorkflowLevel, WorkflowAssignment};
 
 class DefaultAssignmentResolver implements AssignmentResolver
 {
+    public function __construct(protected AssignmentProviderRegistry $providers) {}
+
     public function userEligibleForLevel(User $user, WorkflowLevel $level, array $context = []): bool
     {
         $initiatorId = data_get($context, 'initiator.id');
@@ -31,6 +33,12 @@ class DefaultAssignmentResolver implements AssignmentResolver
 
         // 2) Criteria-based (very generic). Example keys: permissions, department_id, designation_id, region_code.
         foreach ($level->assignments as $a) {
+            if ($provider = $this->providers->for($a)) {
+                if ($provider->contains($user, $a, $context)) {
+                    return true;
+                }
+            }
+
             $criteria = (array) ($a->criteria ?? []);
 
             // permissions: ["approve_invoices", "finance:review"]
@@ -56,6 +64,10 @@ class DefaultAssignmentResolver implements AssignmentResolver
         $userClass = config('workflows.user_model');
 
         foreach ($level->assignments as $a) {
+            if ($provider = $this->providers->for($a)) {
+                $users = $users->merge($provider->users($a, $context));
+            }
+
             $criteria = (array) ($a->criteria ?? []);
 
             if ($a->assignable && $a->assignable instanceof $userClass) {

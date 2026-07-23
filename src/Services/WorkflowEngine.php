@@ -13,6 +13,20 @@ use Qnox\Workflows\Models\WorkflowLevel;
 use Qnox\Workflows\Models\WorkflowTransition;
 use Qnox\Workflows\Services\Guards\GuardEvaluator;
 use Qnox\Workflows\Support\WorkflowStatuses;
+use Qnox\Workflows\Events\{
+    WorkflowActioned,
+    WorkflowActioning,
+    WorkflowCompleted,
+    WorkflowHeld,
+    WorkflowLevelEntered,
+    WorkflowLevelExited,
+    WorkflowRecalled,
+    WorkflowRejected,
+    WorkflowResumed,
+    WorkflowReturned,
+    WorkflowStarted,
+    WorkflowStarting
+};
 
 class WorkflowEngine
 {
@@ -28,6 +42,18 @@ class WorkflowEngine
         $context = $this->normalizeContext($context, $initiator);
 
         return $this->db->transaction(function () use ($subject, $workflow, $start, $initiator, $context) {
+            $pending = new WorkflowInstance([
+                'workflow_id' => $workflow->id,
+                'subject_type' => get_class($subject),
+                'subject_id' => $subject->getKey(),
+                'initiator_type' => get_class($initiator),
+                'initiator_id' => $initiator->getAuthIdentifier(),
+                'current_level_id' => $start->id,
+                'status' => WorkflowStatuses::PENDING,
+                'context' => $context,
+            ]);
+            event(new WorkflowStarting($pending, $initiator, null, $context));
+
             $instance = WorkflowInstance::create([
                 'workflow_id' => $workflow->id,
                 'subject_type' => get_class($subject),
@@ -42,7 +68,11 @@ class WorkflowEngine
             $this->createHistoryEntry($instance, $start, WorkflowStatuses::PENDING);
             $this->notifyNextApprovers($instance, $start);
 
-            return $instance->fresh(['currentLevel', 'workflow', 'history.level']);
+            $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level']);
+            $this->afterCommit(fn () => event(new WorkflowStarted($result, $initiator, null, $context)));
+            $this->afterCommit(fn () => event(new WorkflowLevelEntered($result, $initiator)));
+
+            return $result;
         });
     }
 
@@ -118,6 +148,8 @@ class WorkflowEngine
                 abort(422, 'Action is not available for the current workflow level.');
             }
 
+            event(new WorkflowActioning($instance, $actor, $transition, $payload));
+
             $resolution = $this->resolveTransitionAction($instance, $current, $transition, $actionKey);
 
             $currentHistory = $this->currentHistory($instance, $current);
@@ -127,6 +159,12 @@ class WorkflowEngine
                     'forward_date' => now(),
                 ]);
             }
+            $this->afterCommit(fn () => event(new WorkflowLevelExited(
+                $instance->fresh(['currentLevel', 'workflow.module']),
+                $actor,
+                $transition,
+                $payload
+            )));
 
             WorkflowAction::create([
                 'workflow_instance_id' => $instance->id,
@@ -177,7 +215,18 @@ class WorkflowEngine
                 ]);
             }
 
-            return $instance->fresh(['currentLevel', 'workflow', 'history.level', 'actions']);
+            $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level', 'actions']);
+            $this->afterCommit(fn () => event(new WorkflowActioned($result, $actor, $transition, $payload)));
+
+            if ($resolution['to_level']) {
+                $this->afterCommit(fn () => event(new WorkflowLevelEntered($result, $actor, $transition, $payload)));
+            }
+
+            if ($eventClass = $this->eventForAction($actionKey, $resolution['instance_status'])) {
+                $this->afterCommit(fn () => event(new $eventClass($result, $actor, $transition, $payload)));
+            }
+
+            return $result;
         });
     }
 
@@ -266,5 +315,32 @@ class WorkflowEngine
         return $transition->status
             ?: data_get($transition->meta, 'status')
             ?: WorkflowStatuses::IN_PROGRESS;
+    }
+
+    protected function afterCommit(callable $callback): void
+    {
+        $this->db->connection()->afterCommit($callback);
+    }
+
+    protected function eventForAction(string $actionKey, string $status): ?string
+    {
+        if ($status === WorkflowStatuses::COMPLETED) {
+            return WorkflowCompleted::class;
+        }
+
+        return match ($status) {
+            WorkflowStatuses::REJECTED => WorkflowRejected::class,
+            WorkflowStatuses::RETURNED => WorkflowReturned::class,
+            WorkflowStatuses::ON_HOLD => WorkflowHeld::class,
+            WorkflowStatuses::RECALLED => WorkflowRecalled::class,
+            default => match ($actionKey) {
+            'reject' => WorkflowRejected::class,
+            'return' => WorkflowReturned::class,
+            'hold' => WorkflowHeld::class,
+            'resume' => WorkflowResumed::class,
+            'recall' => WorkflowRecalled::class,
+            default => null,
+            },
+        };
     }
 }
