@@ -31,5 +31,6 @@ class WorkflowInstance extends Model
     public function currentLevel() { return $this->belongsTo(WorkflowLevel::class, 'current_level_id'); }
     public function history() { return $this->hasMany(WorkflowInstanceLevel::class); }
     public function actions() { return $this->hasMany(WorkflowAction::class); }
+    public function inboxItems() { return $this->hasMany(WorkflowInboxItem::class); }
     public function initiator() { return $this->morphTo(); }
 }

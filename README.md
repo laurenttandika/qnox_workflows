@@ -379,6 +379,7 @@ Version 1 provides web configuration screens for:
 - Configured actions and transitions
 - Number formats and sequences
 - Workflow instance history and action modals
+- Per-user workflow inboxes and sidebar counters
 
 Add the settings link to a Blade menu:
 
@@ -398,6 +399,122 @@ $menu->register(WorkflowMenu::items());
 
 The package does not mutate the host application's navigation. This keeps it compatible
 with Blade sidebars, AdminLTE, Spatie menus, Livewire navigation, and custom menu tables.
+
+## Workflow Inbox and Sidebar Counters
+
+The package materializes one `WorkflowInboxItem` for every resolved user when a workflow
+enters a level. This makes counters fast and records whether each recipient opened or
+responded to the assignment.
+
+Default inbox:
+
+```text
+/workflows/inbox
+```
+
+Named links:
+
+```text
+workflows.inbox.index
+workflows.inbox.new
+workflows.inbox.pending
+workflows.inbox.attended
+workflows.inbox.responded
+workflows.inbox.held
+workflows.inbox.ended
+workflows.inbox.counts
+```
+
+Categories mean:
+
+- `new`: assigned but not yet opened
+- `pending`: currently assigned and not yet answered
+- `attended`: opened but not yet answered
+- `responded`: the user performed a workflow action
+- `held`: a workflow related to the user is currently on hold
+- `ended`: a workflow related to the user has completed
+
+Get all counters:
+
+```php
+use Qnox\Workflows\Services\WorkflowInbox;
+
+$counts = app(WorkflowInbox::class)->counts(auth()->user());
+```
+
+Example:
+
+```php
+[
+    'new' => 4,
+    'pending' => 7,
+    'attended' => 2,
+    'responded' => 16,
+    'held' => 1,
+    'ended' => 42,
+]
+```
+
+Add links directly to a Blade sidebar:
+
+```blade
+@php($workflowCounts = app(\Qnox\Workflows\Services\WorkflowInbox::class)->counts(auth()->user()))
+
+<a href="{{ route('workflows.inbox.new') }}">
+    New workflows
+    @if($workflowCounts['new'])
+        <span class="badge">{{ $workflowCounts['new'] }}</span>
+    @endif
+</a>
+
+<a href="{{ route('workflows.inbox.responded') }}">
+    Responded
+    <span class="badge">{{ $workflowCounts['responded'] }}</span>
+</a>
+```
+
+Or use the package menu descriptors:
+
+```php
+$items = WorkflowMenu::inbox(auth()->user());
+```
+
+For asynchronous sidebar updates:
+
+```http
+GET /workflows/inbox/counts
+```
+
+The response contains the six counter values as JSON. The default inbox is provided by
+`workflows::inbox.index` and can be replaced:
+
+```php
+'views' => [
+    'inbox' => 'my-application.workflows.inbox',
+],
+```
+
+Approvers also receive `NextApproverNotification`. Configure its channels:
+
+```php
+'notify_channels' => ['mail', 'database'],
+```
+
+Mail notifications link to `workflows.inbox.show`; database notifications contain the
+workflow instance, workflow, subject, current level, and status identifiers. Notifications
+are queued after the workflow transaction commits.
+
+Inbox routes have their own middleware configuration:
+
+```php
+'routes' => [
+    'inbox' => [
+        'enabled' => true,
+        'prefix' => 'workflows/inbox',
+        'middleware' => ['web', 'auth'],
+    ],
+],
+```
 
 ## Modules and Groups
 
@@ -557,6 +674,17 @@ Register providers in the published configuration:
 ],
 ```
 
+Expose the types in the settings form:
+
+```php
+'assignment_options' => [
+    'user' => ['label' => 'User', 'model' => App\Models\User::class],
+    'position' => ['label' => 'Position', 'model' => App\Models\Position::class],
+    'designation' => ['label' => 'Designation', 'model' => App\Models\Designation::class],
+    'unit' => ['label' => 'Unit', 'model' => App\Models\Department::class],
+],
+```
+
 Use a morph map to avoid storing application class names:
 
 ```php
@@ -686,3 +814,16 @@ To render package actions inside a custom resource view:
         ->availableActions($instance, auth()->user()),
 ])
 ```
+
+## Manual Testing Checklist
+
+1. Open `/settings/workflows` and create a group, module, definition, levels, and transitions.
+2. Create assignments for the start and approval levels.
+3. Start a workflow using `startWorkflow()` or `WorkflowEngine::start()`.
+4. Sign in as the resolved approver and open `/workflows/inbox/new`.
+5. Opening the item moves it from `new` to `attended`.
+6. Perform an action from the generated modal.
+7. Confirm the item appears under `responded` and the next approver receives a `new` item.
+8. Complete the workflow and confirm it appears under `ended`.
+9. Create a number format under Workflow Settings → Number Formats.
+10. Generate several numbers and confirm padding and reset behavior.

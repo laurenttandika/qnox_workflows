@@ -34,4 +34,5 @@ class WorkflowInstanceLevel extends Model
     public function level() { return $this->belongsTo(WorkflowLevel::class, 'workflow_level_id'); }
     public function parent() { return $this->belongsTo(self::class, 'parent_id'); }
     public function assignee() { return $this->morphTo('assigned_to'); }
+    public function inboxItems() { return $this->hasMany(WorkflowInboxItem::class); }
 }

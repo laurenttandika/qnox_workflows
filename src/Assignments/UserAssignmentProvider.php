@@ -12,9 +12,10 @@ class UserAssignmentProvider implements AssignmentProvider
     public function users(WorkflowAssignment $assignment, array $context = []): Collection
     {
         $userClass = config('workflows.user_model');
+        $userMorphClass = (new $userClass)->getMorphClass();
         $users = collect();
 
-        if ($assignment->assignable_type === $userClass && $assignment->assignable) {
+        if (in_array($assignment->assignable_type, [$userClass, $userMorphClass], true) && $assignment->assignable) {
             $users->push($assignment->assignable);
         }
 

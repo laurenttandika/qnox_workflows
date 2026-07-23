@@ -6,6 +6,15 @@ return [
     'assignment_providers' => [
         'user' => Qnox\Workflows\Assignments\UserAssignmentProvider::class,
     ],
+    'assignment_options' => [
+        'user' => [
+            'label' => 'User',
+            'model' => App\Models\User::class,
+        ],
+        // Add application models when their providers are registered:
+        // 'position' => ['label' => 'Position', 'model' => App\Models\Position::class],
+        // 'unit' => ['label' => 'Unit', 'model' => App\Models\Department::class],
+    ],
     'notify_channels' => ['mail'],
 
     'routes' => [
@@ -13,6 +22,11 @@ return [
             'enabled' => true,
             'prefix' => 'settings/workflows',
             'name_prefix' => 'workflows.',
+            'middleware' => ['web', 'auth'],
+        ],
+        'inbox' => [
+            'enabled' => true,
+            'prefix' => 'workflows/inbox',
             'middleware' => ['web', 'auth'],
         ],
         'api' => [
@@ -34,6 +48,7 @@ return [
         'instance' => 'workflows::instances.show',
         'actions' => 'workflows::actions.buttons',
         'action_modal' => 'workflows::actions.modal',
+        'inbox' => 'workflows::inbox.index',
     ],
 
     'permissions' => [

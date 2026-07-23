@@ -20,6 +20,24 @@
     @foreach($workflow->levels as $level)<tr><td>{{ $level->sequence }}</td><td>{{ $level->name }}</td><td>{{ $level->is_start ? 'Yes' : '—' }}</td><td>{{ $level->is_terminal ? 'Yes' : '—' }}</td></tr>@endforeach
     </tbody></table></div>
 
+    <h2>Assignments</h2>
+    <p class="muted">Use an application model ID, or criteria such as {"initiator":true} or {"user_ids":[1,2]}.</p>
+    <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.assignments.store', $workflow) }}" class="card">
+        @csrf
+        <div class="fields">
+            <label>Level<select name="workflow_level_id" required>@foreach($workflow->levels as $level)<option value="{{ $level->id }}">{{ $level->name }}</option>@endforeach</select></label>
+            <label>Assignment type<select name="type" required>@foreach(config('workflows.assignment_options', []) as $type => $option)<option value="{{ $type }}">{{ $option['label'] ?? ucfirst($type) }}</option>@endforeach</select></label>
+            <label>Model ID <span class="muted">(optional)</span><input name="assignable_id" type="number" min="1"></label>
+            <label>Criteria JSON <span class="muted">(optional)</span><input name="criteria" placeholder='{"initiator":true}'></label>
+            <button>Add assignment</button>
+        </div>
+    </form>
+    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Model</th><th>ID</th><th>Criteria</th></tr></thead><tbody>
+    @forelse($workflow->levels->flatMap->assignments as $assignment)
+        <tr><td>{{ $assignment->level?->name ?? $workflow->levels->firstWhere('id', $assignment->workflow_level_id)?->name }}</td><td>{{ $assignment->type }}</td><td>{{ $assignment->assignable_type }}</td><td>{{ $assignment->assignable_id }}</td><td>{{ json_encode($assignment->criteria) }}</td></tr>
+    @empty <tr><td colspan="5">No assignments configured.</td></tr> @endforelse
+    </tbody></table></div>
+
     <h2>Actions and transitions</h2>
     <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.transitions.store', $workflow) }}" class="card">
         @csrf

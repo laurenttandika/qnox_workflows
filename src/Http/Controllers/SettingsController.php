@@ -13,6 +13,7 @@ use Qnox\Workflows\Models\WorkflowInstance;
 use Qnox\Workflows\Models\WorkflowModule;
 use Qnox\Workflows\Models\WorkflowLevel;
 use Qnox\Workflows\Models\WorkflowTransition;
+use Qnox\Workflows\Models\WorkflowAssignment;
 use Qnox\Workflows\Services\NumberGenerator;
 
 class SettingsController extends Controller
@@ -126,7 +127,7 @@ class SettingsController extends Controller
         $workflow->load([
             'group',
             'module',
-            'levels' => fn ($query) => $query->orderBy('sequence'),
+            'levels' => fn ($query) => $query->with('assignments')->orderBy('sequence'),
             'transitions.fromLevel',
             'transitions.toLevel',
         ]);
@@ -157,6 +158,46 @@ class SettingsController extends Controller
         $workflow->levels()->create($data);
 
         return back()->with('workflow_status', 'Workflow level added.');
+    }
+
+    public function storeAssignment(Request $request, Workflow $workflow)
+    {
+        $options = config('workflows.assignment_options', []);
+        $data = $request->validate([
+            'workflow_level_id' => [
+                'required',
+                Rule::exists('workflow_levels', 'id')->where('workflow_id', $workflow->id),
+            ],
+            'type' => ['required', Rule::in(array_keys($options))],
+            'assignable_id' => ['nullable', 'integer'],
+            'criteria' => ['nullable', 'json'],
+        ]);
+
+        $option = $options[$data['type']];
+        $criteria = $data['criteria'] ? json_decode($data['criteria'], true, flags: JSON_THROW_ON_ERROR) : null;
+        $modelClass = $option['model'];
+
+        if (!$data['assignable_id'] && !$criteria) {
+            return back()->withErrors([
+                'assignable_id' => 'Provide an assignable ID or assignment criteria.',
+            ])->withInput();
+        }
+
+        if ($data['assignable_id'] && (!$modelClass::query()->whereKey($data['assignable_id'])->exists())) {
+            return back()->withErrors([
+                'assignable_id' => "The selected {$option['label']} does not exist.",
+            ])->withInput();
+        }
+
+        WorkflowAssignment::create([
+            'workflow_level_id' => $data['workflow_level_id'],
+            'type' => $data['type'],
+            'assignable_type' => $data['assignable_id'] ? (new $modelClass)->getMorphClass() : null,
+            'assignable_id' => $data['assignable_id'] ?: null,
+            'criteria' => $criteria,
+        ]);
+
+        return back()->with('workflow_status', 'Level assignment added.');
     }
 
     public function storeTransition(Request $request, Workflow $workflow)

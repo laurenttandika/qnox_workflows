@@ -4,6 +4,21 @@ namespace Qnox\Workflows\Support;
 
 class WorkflowMenu
 {
+    public static function inbox(?object $user = null): array
+    {
+        $counts = $user ? app(\Qnox\Workflows\Services\WorkflowInbox::class)->counts($user) : [];
+
+        return collect(['new', 'pending', 'attended', 'responded', 'held', 'ended'])
+            ->map(fn (string $category) => [
+                'label' => ucfirst($category),
+                'route' => self::route('inbox.'.$category),
+                'route_parameters' => [],
+                'badge' => $counts[$category] ?? null,
+                'permission' => config('workflows.permissions.view'),
+            ])
+            ->all();
+    }
+
     public static function items(): array
     {
         return [[

@@ -34,6 +34,7 @@ class WorkflowEngine
         protected DB $db,
         protected AssignmentResolver $resolver,
         protected GuardEvaluator $guards,
+        protected WorkflowInbox $inbox,
     ) {}
 
     public function start($subject, Workflow $workflow, User $initiator, array $context = []): WorkflowInstance
@@ -65,7 +66,8 @@ class WorkflowEngine
                 'context' => $context,
             ]);
 
-            $this->createHistoryEntry($instance, $start, WorkflowStatuses::PENDING);
+            $history = $this->createHistoryEntry($instance, $start, WorkflowStatuses::PENDING);
+            $this->inbox->createForLevel($instance->loadMissing('workflow'), $history, $start);
             $this->notifyNextApprovers($instance, $start);
 
             $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level']);
@@ -166,7 +168,7 @@ class WorkflowEngine
                 $payload
             )));
 
-            WorkflowAction::create([
+            $action = WorkflowAction::create([
                 'workflow_instance_id' => $instance->id,
                 'from_level_id' => $current->id,
                 'to_level_id' => $resolution['to_level']?->id,
@@ -177,6 +179,10 @@ class WorkflowEngine
                 'comment' => $payload['comment'] ?? $payload['comments'] ?? null,
                 'payload' => $payload,
             ]);
+
+            if ($currentHistory) {
+                $this->inbox->closeLevel($currentHistory, $actor, $action);
+            }
 
             $instanceUpdates = [
                 'status' => $resolution['instance_status'],
@@ -195,13 +201,18 @@ class WorkflowEngine
             $instance->update($instanceUpdates);
 
             if ($resolution['to_level']) {
-                $this->createHistoryEntry(
+                $nextHistory = $this->createHistoryEntry(
                     $instance->fresh(),
                     $resolution['to_level'],
                     $resolution['history_status'],
                     $currentHistory,
                     $actionKey,
                     $payload['comment'] ?? $payload['comments'] ?? null
+                );
+                $this->inbox->createForLevel(
+                    $instance->fresh()->loadMissing('workflow'),
+                    $nextHistory,
+                    $resolution['to_level']
                 );
 
                 if (!in_array($resolution['instance_status'], [WorkflowStatuses::COMPLETED, WorkflowStatuses::ON_HOLD], true)) {
@@ -213,6 +224,10 @@ class WorkflowEngine
                     'action_key' => $actionKey,
                     'comments' => $payload['comment'] ?? $payload['comments'] ?? null,
                 ]);
+            }
+
+            if ($resolution['instance_status'] === WorkflowStatuses::COMPLETED) {
+                $this->inbox->closeInstance($instance);
             }
 
             $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level', 'actions']);
