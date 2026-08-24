@@ -15,7 +15,12 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('workflow_level_id')->constrained()->cascadeOnDelete();
             $table->string('type')->default('user');
-            $table->morphs('participant');
+            $table->string('participant_type');
+            $table->unsignedBigInteger('participant_id');
+            $table->index(
+                ['participant_type', 'participant_id'],
+                'workflow_level_participant_morph_index'
+            );
             $table->string('role')->nullable();
             $table->boolean('can_view')->default(true);
             $table->boolean('can_claim')->default(true);
