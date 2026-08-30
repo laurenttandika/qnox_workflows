@@ -10,10 +10,17 @@
         </div>
     </form>
     <div class="card">
-        <table><thead><tr><th>Name</th><th>Slug</th><th>Modules</th><th>Definitions</th></tr></thead><tbody>
+        <table><thead><tr><th>Name</th><th>Slug</th><th>Modules</th><th>Definitions</th><th>Configure</th></tr></thead><tbody>
         @forelse($groups as $group)
-            <tr><td>{{ $group->name }}</td><td>{{ $group->slug }}</td><td>{{ $group->modules_count }}</td><td>{{ $group->workflows_count }}</td></tr>
-        @empty <tr><td colspan="4">No module groups configured.</td></tr> @endforelse
+            <tr><td>{{ $group->name }}</td><td>{{ $group->slug }}</td><td>{{ $group->modules_count }}</td><td>{{ $group->workflows_count }}</td><td><details><summary>Edit</summary>
+                <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'groups.update', $group) }}">
+                    @csrf @method('PUT')
+                    <label>Name<input name="name" value="{{ $group->name }}" required></label>
+                    <label>Slug<input name="slug" value="{{ $group->slug }}" required></label>
+                    <button>Save group</button>
+                </form>
+            </details></td></tr>
+        @empty <tr><td colspan="5">No module groups configured.</td></tr> @endforelse
         </tbody></table>
     </div>
 </div>

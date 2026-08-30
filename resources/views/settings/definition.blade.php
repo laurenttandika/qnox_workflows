@@ -3,6 +3,20 @@
     <h1>{{ $workflow->name }}</h1>
     <p class="muted">{{ $workflow->group?->name }} @if($workflow->module) / {{ $workflow->module->name }} @endif</p>
 
+    <details class="card"><summary>Edit definition</summary>
+        <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.update', $workflow) }}">
+            @csrf @method('PUT')
+            <div class="fields">
+                <label>Group<select name="workflow_group_id" required>@foreach($groups as $group)<option value="{{ $group->id }}" @selected($workflow->workflow_group_id === $group->id)>{{ $group->name }}</option>@endforeach</select></label>
+                <label>Module<select name="workflow_module_id"><option value="">None</option>@foreach($modules as $module)<option value="{{ $module->id }}" @selected($workflow->workflow_module_id === $module->id)>{{ $module->name }}</option>@endforeach</select></label>
+                <label>Name<input name="name" value="{{ $workflow->name }}" required></label>
+                <label>Slug<input name="slug" value="{{ $workflow->slug }}" required></label>
+                <label><input style="width:auto" type="checkbox" name="is_active" value="1" @checked($workflow->is_active)> Active</label>
+                <button>Save definition</button>
+            </div>
+        </form>
+    </details>
+
     <h2>Levels</h2>
     <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.levels.store', $workflow) }}" class="card">
         @csrf
@@ -61,7 +75,7 @@
             <button>Save participant</button>
         </div>
     </form>
-    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Participant</th><th>Role</th><th>Permissions</th></tr></thead><tbody>
+    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Participant</th><th>Role</th><th>Permissions</th><th>Configure</th></tr></thead><tbody>
     @forelse($workflow->levels->flatMap->participants as $participant)
         <tr>
             <td>{{ $workflow->levels->firstWhere('id', $participant->workflow_level_id)?->name }}</td>
@@ -69,8 +83,15 @@
             <td>{{ data_get($participant->participant, 'name') ?? data_get($participant->participant, 'email') ?? class_basename($participant->participant_type).' #'.$participant->participant_id }}</td>
             <td>{{ $participant->role }}</td>
             <td>{{ $participant->can_view ? 'View ' : '' }}{{ $participant->can_claim ? 'Attend ' : '' }}{{ $participant->can_act ? 'Act' : '' }}</td>
+            <td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.participants.update', [$workflow, $participant]) }}">
+                @csrf @method('PUT')
+                <label>Level<select name="workflow_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($participant->workflow_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
+                <label>Role<input name="role" value="{{ $participant->role }}"></label>
+                @foreach(['can_view'=>'Can view','can_claim'=>'Can attend','can_act'=>'Can act'] as $field => $label)<label><input style="width:auto" type="checkbox" name="{{ $field }}" value="1" @checked($participant->{$field})> {{ $label }}</label>@endforeach
+                <button>Save participant</button>
+            </form></details></td>
         </tr>
-    @empty <tr><td colspan="5">No explicit participants. Existing level assignments are used as the compatibility fallback.</td></tr> @endforelse
+    @empty <tr><td colspan="6">No explicit participants. Existing level assignments are used as the compatibility fallback.</td></tr> @endforelse
     </tbody></table></div>
 
     <h2>Assignments</h2>
@@ -85,10 +106,17 @@
             <button>Add assignment</button>
         </div>
     </form>
-    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Model</th><th>ID</th><th>Criteria</th></tr></thead><tbody>
+    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Model</th><th>ID</th><th>Criteria</th><th>Configure</th></tr></thead><tbody>
     @forelse($workflow->levels->flatMap->assignments as $assignment)
-        <tr><td>{{ $assignment->level?->name ?? $workflow->levels->firstWhere('id', $assignment->workflow_level_id)?->name }}</td><td>{{ $assignment->type }}</td><td>{{ $assignment->assignable_type }}</td><td>{{ $assignment->assignable_id }}</td><td>{{ json_encode($assignment->criteria) }}</td></tr>
-    @empty <tr><td colspan="5">No assignments configured.</td></tr> @endforelse
+        <tr><td>{{ $assignment->level?->name ?? $workflow->levels->firstWhere('id', $assignment->workflow_level_id)?->name }}</td><td>{{ $assignment->type }}</td><td>{{ $assignment->assignable_type }}</td><td>{{ $assignment->assignable_id }}</td><td>{{ json_encode($assignment->criteria) }}</td><td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.assignments.update', [$workflow, $assignment]) }}">
+            @csrf @method('PUT')
+            <label>Level<select name="workflow_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($assignment->workflow_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
+            <label>Type<select name="type">@foreach(config('workflows.assignment_options', []) as $type => $option)<option value="{{ $type }}" @selected($assignment->type === $type)>{{ $option['label'] ?? ucfirst($type) }}</option>@endforeach</select></label>
+            <label>Model ID<input type="number" min="1" name="assignable_id" value="{{ $assignment->assignable_id }}"></label>
+            <label>Criteria JSON<input name="criteria" value="{{ $assignment->criteria ? json_encode($assignment->criteria) : '' }}"></label>
+            <button>Save assignment</button>
+        </form></details></td></tr>
+    @empty <tr><td colspan="6">No assignments configured.</td></tr> @endforelse
     </tbody></table></div>
 
     <h2>Actions and transitions</h2>
@@ -106,7 +134,18 @@
             <button>Add transition</button>
         </div>
     </form>
-    <div class="card"><table><thead><tr><th>From</th><th>Action</th><th>To</th><th>Status</th></tr></thead><tbody>
-    @foreach($workflow->transitions as $transition)<tr><td>{{ $transition->fromLevel?->name }}</td><td>{{ $transition->label }} ({{ $transition->action_key }})</td><td>{{ $transition->toLevel?->name ?? '—' }}</td><td>{{ $transition->status }}</td></tr>@endforeach
+    <div class="card"><table><thead><tr><th>From</th><th>Action</th><th>To</th><th>Status</th><th>Configure</th></tr></thead><tbody>
+    @foreach($workflow->transitions as $transition)<tr><td>{{ $transition->fromLevel?->name }}</td><td>{{ $transition->label }} ({{ $transition->action_key }})</td><td>{{ $transition->toLevel?->name ?? '—' }}</td><td>{{ $transition->status }}</td><td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.transitions.update', [$workflow, $transition]) }}">
+        @csrf @method('PUT')
+        <label>From<select name="from_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($transition->from_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
+        <label>To<select name="to_level_id"><option value="">Same/terminal</option>@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($transition->to_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
+        <label>Action key<input name="action_key" value="{{ $transition->action_key }}" required></label>
+        <label>Button label<input name="label" value="{{ $transition->label }}" required></label>
+        <label>Direction<select name="direction">@foreach(['forward','backward','stay'] as $direction)<option value="{{ $direction }}" @selected($transition->direction === $direction)>{{ $direction }}</option>@endforeach</select></label>
+        <label>Status<input name="status" value="{{ $transition->status }}" required></label>
+        <label>Action form JSON<textarea name="form_schema">{{ $transition->form_schema ? json_encode($transition->form_schema) : '' }}</textarea></label>
+        <label><input style="width:auto" type="checkbox" name="complete" value="1" @checked(data_get($transition->meta, 'complete', false))> Completes workflow</label>
+        <button>Save transition</button>
+    </form></details></td></tr>@endforeach
     </tbody></table></div>
 </div>

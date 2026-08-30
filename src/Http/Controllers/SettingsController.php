@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Qnox\Workflows\Models\NumberSequence;
 use Qnox\Workflows\Models\Workflow;
 use Qnox\Workflows\Models\WorkflowGroup;
@@ -107,13 +108,7 @@ class SettingsController extends Controller
 
     public function storeDefinition(Request $request)
     {
-        $data = $request->validate([
-            'workflow_group_id' => ['required', 'exists:workflow_groups,id'],
-            'workflow_module_id' => ['nullable', 'exists:workflow_modules,id'],
-            'name' => ['required', 'string', 'max:120'],
-            'slug' => ['nullable', 'string', 'max:120', 'unique:workflows,slug'],
-            'is_active' => ['sometimes', 'boolean'],
-        ]) + ['is_active' => false];
+        $data = $this->definitionData($request);
         $data['slug'] = $data['slug'] ?: Str::slug($data['name']);
         $workflow = Workflow::create($data);
 
@@ -121,6 +116,29 @@ class SettingsController extends Controller
             config('workflows.routes.web.name_prefix', 'workflows.').'definitions.show',
             $workflow
         )->with('workflow_status', 'Workflow definition created. Add its levels and transitions.');
+    }
+
+    public function updateDefinition(Request $request, Workflow $workflow)
+    {
+        $workflow->update($this->definitionData($request, $workflow));
+
+        return back()->with('workflow_status', 'Workflow definition updated.');
+    }
+
+    protected function definitionData(Request $request, ?Workflow $workflow = null): array
+    {
+        return $request->validate([
+            'workflow_group_id' => ['required', 'exists:workflow_groups,id'],
+            'workflow_module_id' => ['nullable', 'exists:workflow_modules,id'],
+            'name' => ['required', 'string', 'max:120'],
+            'slug' => [
+                $workflow ? 'required' : 'nullable',
+                'string',
+                'max:120',
+                Rule::unique('workflows')->ignore($workflow),
+            ],
+            'is_active' => ['sometimes', 'boolean'],
+        ]) + ['is_active' => false];
     }
 
     public function definition(Workflow $workflow)
@@ -133,7 +151,11 @@ class SettingsController extends Controller
             'transitions.toLevel',
         ]);
 
-        return view(config('workflows.views.definition'), compact('workflow'));
+        return view(config('workflows.views.definition'), [
+            'workflow' => $workflow,
+            'groups' => WorkflowGroup::orderBy('name')->get(),
+            'modules' => WorkflowModule::orderBy('name')->get(),
+        ]);
     }
 
     public function storeLevel(Request $request, Workflow $workflow)
@@ -243,6 +265,27 @@ class SettingsController extends Controller
         return back()->with('workflow_status', 'Workflow participant permission saved.');
     }
 
+    public function updateParticipant(
+        Request $request,
+        Workflow $workflow,
+        WorkflowLevelParticipant $participant
+    ) {
+        abort_unless((int) $participant->level?->workflow_id === (int) $workflow->id, 404);
+        $data = $request->validate([
+            'workflow_level_id' => [
+                'required',
+                Rule::exists('workflow_levels', 'id')->where('workflow_id', $workflow->id),
+            ],
+            'role' => ['nullable', 'string', 'max:80'],
+            'can_view' => ['sometimes', 'boolean'],
+            'can_claim' => ['sometimes', 'boolean'],
+            'can_act' => ['sometimes', 'boolean'],
+        ]) + ['can_view' => false, 'can_claim' => false, 'can_act' => false];
+        $participant->update($data);
+
+        return back()->with('workflow_status', 'Workflow participant updated.');
+    }
+
     public function participants()
     {
         $userClass = config('workflows.user_model');
@@ -310,6 +353,22 @@ class SettingsController extends Controller
 
     public function storeAssignment(Request $request, Workflow $workflow)
     {
+        $data = $this->assignmentData($request, $workflow);
+        WorkflowAssignment::create($data);
+
+        return back()->with('workflow_status', 'Level assignment added.');
+    }
+
+    public function updateAssignment(Request $request, Workflow $workflow, WorkflowAssignment $assignment)
+    {
+        abort_unless((int) $assignment->level?->workflow_id === (int) $workflow->id, 404);
+        $assignment->update($this->assignmentData($request, $workflow));
+
+        return back()->with('workflow_status', 'Level assignment updated.');
+    }
+
+    protected function assignmentData(Request $request, Workflow $workflow): array
+    {
         $options = config('workflows.assignment_options', []);
         $data = $request->validate([
             'workflow_level_id' => [
@@ -326,29 +385,42 @@ class SettingsController extends Controller
         $modelClass = $option['model'];
 
         if (!$data['assignable_id'] && !$criteria) {
-            return back()->withErrors([
+            throw ValidationException::withMessages([
                 'assignable_id' => 'Provide an assignable ID or assignment criteria.',
-            ])->withInput();
+            ]);
         }
 
         if ($data['assignable_id'] && (!$modelClass::query()->whereKey($data['assignable_id'])->exists())) {
-            return back()->withErrors([
+            throw ValidationException::withMessages([
                 'assignable_id' => "The selected {$option['label']} does not exist.",
-            ])->withInput();
+            ]);
         }
 
-        WorkflowAssignment::create([
+        return [
             'workflow_level_id' => $data['workflow_level_id'],
             'type' => $data['type'],
             'assignable_type' => $data['assignable_id'] ? (new $modelClass)->getMorphClass() : null,
             'assignable_id' => $data['assignable_id'] ?: null,
             'criteria' => $criteria,
-        ]);
-
-        return back()->with('workflow_status', 'Level assignment added.');
+        ];
     }
 
     public function storeTransition(Request $request, Workflow $workflow)
+    {
+        WorkflowTransition::create($this->transitionData($request, $workflow));
+
+        return back()->with('workflow_status', 'Workflow transition added.');
+    }
+
+    public function updateTransition(Request $request, Workflow $workflow, WorkflowTransition $transition)
+    {
+        abort_unless((int) $transition->workflow_id === (int) $workflow->id, 404);
+        $transition->update($this->transitionData($request, $workflow, $transition));
+
+        return back()->with('workflow_status', 'Workflow transition updated.');
+    }
+
+    protected function transitionData(Request $request, Workflow $workflow, ?WorkflowTransition $transition = null): array
     {
         $data = $request->validate([
             'from_level_id' => [
@@ -359,7 +431,14 @@ class SettingsController extends Controller
                 'nullable',
                 Rule::exists('workflow_levels', 'id')->where('workflow_id', $workflow->id),
             ],
-            'action_key' => ['required', 'alpha_dash', 'max:64'],
+            'action_key' => [
+                'required',
+                'alpha_dash',
+                'max:64',
+                Rule::unique('workflow_transitions')->where(fn ($query) => $query
+                    ->where('workflow_id', $workflow->id)
+                    ->where('from_level_id', $request->input('from_level_id')))->ignore($transition),
+            ],
             'label' => ['required', 'string', 'max:120'],
             'direction' => ['required', Rule::in(['forward', 'backward', 'stay'])],
             'status' => ['required', 'string', 'max:64'],
@@ -373,9 +452,7 @@ class SettingsController extends Controller
             : null;
         unset($data['complete']);
 
-        WorkflowTransition::create($data);
-
-        return back()->with('workflow_status', 'Workflow transition added.');
+        return $data;
     }
 
     public function storeNumber(Request $request)

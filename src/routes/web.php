@@ -22,11 +22,15 @@ Route::prefix(config('workflows.routes.web.prefix', 'settings/workflows'))
         Route::get('/definitions', [SettingsController::class, 'definitions'])->name('definitions.index');
         Route::post('/definitions', [SettingsController::class, 'storeDefinition'])->name('definitions.store');
         Route::get('/definitions/{workflow}', [SettingsController::class, 'definition'])->name('definitions.show');
+        Route::put('/definitions/{workflow}', [SettingsController::class, 'updateDefinition'])->name('definitions.update');
         Route::post('/definitions/{workflow}/levels', [SettingsController::class, 'storeLevel'])->name('definitions.levels.store');
         Route::put('/definitions/{workflow}/levels/{level}', [SettingsController::class, 'updateLevel'])->name('definitions.levels.update');
         Route::post('/definitions/{workflow}/assignments', [SettingsController::class, 'storeAssignment'])->name('definitions.assignments.store');
+        Route::put('/definitions/{workflow}/assignments/{assignment}', [SettingsController::class, 'updateAssignment'])->name('definitions.assignments.update');
         Route::post('/definitions/{workflow}/participants', [SettingsController::class, 'storeParticipant'])->name('definitions.participants.store');
+        Route::put('/definitions/{workflow}/participants/{participant}', [SettingsController::class, 'updateParticipant'])->name('definitions.participants.update');
         Route::post('/definitions/{workflow}/transitions', [SettingsController::class, 'storeTransition'])->name('definitions.transitions.store');
+        Route::put('/definitions/{workflow}/transitions/{transition}', [SettingsController::class, 'updateTransition'])->name('definitions.transitions.update');
 
         Route::get('/participants', [SettingsController::class, 'participants'])->name('participants.index');
         Route::get('/participants/users/{user}', [SettingsController::class, 'userPermissions'])->name('participants.user');

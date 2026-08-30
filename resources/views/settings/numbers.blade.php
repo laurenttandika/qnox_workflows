@@ -17,10 +17,23 @@
         </div>
     </form>
     <div class="card">
-        <table><thead><tr><th>Name</th><th>Key</th><th>Format</th><th>Next</th><th>Reset</th><th>Status</th></tr></thead><tbody>
+        <table><thead><tr><th>Name</th><th>Key</th><th>Format</th><th>Next</th><th>Reset</th><th>Status</th><th>Configure</th></tr></thead><tbody>
         @forelse($sequences as $sequence)
-            <tr><td>{{ $sequence->name }}</td><td>{{ $sequence->key }}</td><td>{{ $sequence->format }}</td><td>{{ $sequence->next_value }}</td><td>{{ $sequence->reset_period }}</td><td>{{ $sequence->is_active ? 'Active' : 'Inactive' }}</td></tr>
-        @empty <tr><td colspan="6">No number formats configured.</td></tr> @endforelse
+            <tr><td>{{ $sequence->name }}</td><td>{{ $sequence->key }}</td><td>{{ $sequence->format }}</td><td>{{ $sequence->next_value }}</td><td>{{ $sequence->reset_period }}</td><td>{{ $sequence->is_active ? 'Active' : 'Inactive' }}</td><td><details><summary>Edit</summary>
+                <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'numbers.update', $sequence) }}">
+                    @csrf @method('PUT')
+                    <label>Name<input name="name" value="{{ $sequence->name }}" required></label>
+                    <label>Key<input name="key" value="{{ $sequence->key }}" required></label>
+                    <label>Prefix<input name="prefix" value="{{ $sequence->prefix }}"></label>
+                    <label>Format<input name="format" value="{{ $sequence->format }}" required></label>
+                    <label>Next value<input type="number" min="1" name="next_value" value="{{ $sequence->next_value }}" required></label>
+                    <label>Padding<input type="number" min="1" max="20" name="padding" value="{{ $sequence->padding }}" required></label>
+                    <label>Reset<select name="reset_period">@foreach(['never','yearly','monthly','daily'] as $period)<option value="{{ $period }}" @selected($sequence->reset_period === $period)>{{ $period }}</option>@endforeach</select></label>
+                    <label><input style="width:auto" type="checkbox" name="is_active" value="1" @checked($sequence->is_active)> Active</label>
+                    <button>Save format</button>
+                </form>
+            </details></td></tr>
+        @empty <tr><td colspan="7">No number formats configured.</td></tr> @endforelse
         </tbody></table>
     </div>
 </div>
