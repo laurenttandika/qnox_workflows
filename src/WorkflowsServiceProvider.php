@@ -3,9 +3,8 @@
 namespace Qnox\Workflows;
 
 use Illuminate\Support\ServiceProvider;
-use Qnox\Workflows\Contracts\AssignmentResolver;
-use Qnox\Workflows\Services\DefaultAssignmentResolver;
-use Qnox\Workflows\Services\Guards\GuardEvaluator;
+use Qnox\Workflows\Contracts\{ModuleRegistry, RoleAssigneeResolver, RoleProvider, SupervisorResolver, UserProvider};
+use Qnox\Workflows\Services\{ConfigModuleRegistry, EloquentUserProvider, UnconfiguredRoleProvider, UnconfiguredSupervisorResolver};
 
 class WorkflowsServiceProvider extends ServiceProvider
 {
@@ -13,12 +12,11 @@ class WorkflowsServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/workflows.php', 'workflows');
 
-        $this->app->bind(AssignmentResolver::class, function ($app) {
-            $class = config('workflows.assignment_resolver', DefaultAssignmentResolver::class);
-            return $app->make($class);
-        });
-
-        $this->app->singleton(GuardEvaluator::class, fn() => new GuardEvaluator());
+        $this->app->singleton(ModuleRegistry::class, ConfigModuleRegistry::class);
+        $this->app->bind(UserProvider::class, fn ($app) => $app->make(config('workflows.providers.users', EloquentUserProvider::class)));
+        $this->app->bind(SupervisorResolver::class, fn ($app) => $app->make(config('workflows.resolvers.supervisor', UnconfiguredSupervisorResolver::class)));
+        $this->app->bind(RoleProvider::class, fn ($app) => $app->make(config('workflows.providers.roles', UnconfiguredRoleProvider::class)));
+        $this->app->bind(RoleAssigneeResolver::class, fn ($app) => $app->make(config('workflows.resolvers.roles', UnconfiguredRoleProvider::class)));
     }
 
     public function boot(): void

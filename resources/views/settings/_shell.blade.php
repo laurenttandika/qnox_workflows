@@ -1,24 +1,6 @@
 <style>
-    .qnox-workflows{max-width:1100px;margin:2rem auto;font:14px/1.5 system-ui,sans-serif;color:#172033}
-    .qnox-workflows nav{display:flex;gap:1rem;margin-bottom:1.5rem}.qnox-workflows a{color:#2457c5}
-    .qnox-workflows .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem}
-    .qnox-workflows .card{border:1px solid #dce2ec;border-radius:8px;padding:1rem;background:#fff;margin-bottom:1rem}
-    .qnox-workflows table{width:100%;border-collapse:collapse}.qnox-workflows th,.qnox-workflows td{padding:.65rem;border-bottom:1px solid #e7ebf1;text-align:left}
-    .qnox-workflows input,.qnox-workflows select,.qnox-workflows textarea{width:100%;box-sizing:border-box;padding:.55rem;border:1px solid #bdc6d5;border-radius:5px}
-    .qnox-workflows button{padding:.55rem .85rem;border:0;border-radius:5px;background:#2457c5;color:#fff;cursor:pointer}
-    .qnox-workflows .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem;align-items:end}
-    .qnox-workflows .status{padding:.75rem;background:#e7f7ed;color:#176735;border-radius:5px;margin-bottom:1rem}
-    .qnox-workflows .muted{color:#667085}.qnox-workflows dialog{border:0;border-radius:8px;box-shadow:0 15px 50px #0004;max-width:520px;width:90%}
+.qnox-workflows{max-width:1000px;margin:2rem auto;font:14px/1.5 system-ui,sans-serif;color:#172033}.qnox-workflows a{color:#2457c5}.qnox-workflows .card{border:1px solid #dce2ec;border-radius:10px;padding:1rem;background:#fff;margin:1rem 0}.qnox-workflows .row{display:flex;gap:1rem;align-items:center;justify-content:space-between}.qnox-workflows label{display:block;margin:.6rem 0;font-weight:600}.qnox-workflows input,.qnox-workflows select{width:100%;box-sizing:border-box;padding:.6rem;border:1px solid #aab4c4;border-radius:5px}.qnox-workflows button,.qnox-workflows .button{display:inline-block;padding:.6rem .9rem;border:0;border-radius:5px;background:#2457c5;color:#fff;text-decoration:none;cursor:pointer}.qnox-workflows button.secondary{background:#667085}.qnox-workflows button.danger{background:#a12020}.qnox-workflows .muted{color:#667085}.qnox-workflows .error{color:#a12020}.qnox-workflows table{width:100%;border-collapse:collapse}.qnox-workflows td,.qnox-workflows th{padding:.7rem;border-bottom:1px solid #e7ebf1;text-align:left}
+@media(prefers-color-scheme:dark){.qnox-workflows{color:#eef2f7}.qnox-workflows .card{background:#192230;border-color:#344054}.qnox-workflows input,.qnox-workflows select{background:#101828;color:#fff;border-color:#475467}}
 </style>
-<nav>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'dashboard') }}">Overview</a>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'groups.index') }}">Module Groups</a>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'modules.index') }}">Modules</a>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.index') }}">Definitions</a>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'participants.index') }}">Workflow Permissions</a>
-    <a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'numbers.index') }}">Number Formats</a>
-</nav>
-@if(session('workflow_status')) <div class="status">{{ session('workflow_status') }}</div> @endif
-@if($errors->any())
-    <div class="card" style="color:#a12020"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
-@endif
+<nav aria-label="Workflow settings"><a href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'modules.index') }}">Registered modules</a></nav>
+@if(session('workflow_status'))<p role="status">{{ session('workflow_status') }}</p>@endif

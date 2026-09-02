@@ -16,13 +16,17 @@ class WorkflowInstance extends Model
         'status',
         'context',
         'submitted_at',
-        'completed_at',
+        'approved_at',
+        'rejected_at',
+        'cancelled_at',
         'last_action_at',
     ];
     protected $casts = [
         'context' => 'array',
         'submitted_at' => 'datetime',
-        'completed_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'cancelled_at' => 'datetime',
         'last_action_at' => 'datetime',
     ];
 
@@ -33,4 +37,6 @@ class WorkflowInstance extends Model
     public function actions() { return $this->hasMany(WorkflowAction::class); }
     public function inboxItems() { return $this->hasMany(WorkflowInboxItem::class); }
     public function initiator() { return $this->morphTo(); }
+    public function currentApprovalLevel() { return $this->history()->where('status', 'pending')->latest('id')->first(); }
+    public function finalOutcome(): ?string { return in_array($this->status, ['approved', 'rejected', 'cancelled'], true) ? $this->status : null; }
 }

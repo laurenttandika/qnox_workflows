@@ -8,21 +8,14 @@
     </div>
     <div class="card">
         <h2>Available actions</h2>
-        @if($canClaim ?? false)
-            <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'inbox.claim', $instance) }}" style="margin-bottom:1rem">
-                @csrf
-                <button type="submit">Attend this workflow</button>
-            </form>
-            <p class="muted">This item is in a shared queue. Attend it before performing workflow actions.</p>
-        @endif
-        @include(config('workflows.views.actions'), compact('instance', 'actions'))
+        @foreach($actions as $action)<form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'instances.decide', $instance) }}" class="card">@csrf<input type="hidden" name="action" value="{{ $action['action'] }}"><label for="comment-{{ $action['action'] }}">Comment</label><textarea id="comment-{{ $action['action'] }}" name="comment"></textarea><button>{{ $action['label'] }}</button></form>@endforeach
         @if(empty($actions))<p class="muted">There are no actions available to you at this level.</p>@endif
     </div>
     <div class="card">
         <h2>History</h2>
-        <table><thead><tr><th>Level</th><th>Status</th><th>Entered</th><th>Exited</th><th>Comments</th></tr></thead><tbody>
+        <table><thead><tr><th>Level</th><th>Status</th><th>Entered</th><th>Exited</th></tr></thead><tbody>
         @foreach($instance->history as $entry)
-            <tr><td>{{ $entry->level?->name }}</td><td>{{ $entry->status }}</td><td>{{ $entry->entered_at }}</td><td>{{ $entry->exited_at }}</td><td>{{ $entry->comments }}</td></tr>
+            <tr><td>{{ $entry->level_name }}</td><td>{{ $entry->status }}</td><td>{{ $entry->entered_at }}</td><td>{{ $entry->exited_at }}</td></tr>
         @endforeach
         </tbody></table>
     </div>

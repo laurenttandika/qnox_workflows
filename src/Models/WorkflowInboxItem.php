@@ -6,8 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class WorkflowInboxItem extends Model
 {
-    public const NEW = 'new';
-    public const ATTENDED = 'attended';
+    public const PENDING = 'pending';
     public const RESPONDED = 'responded';
     public const ENDED = 'ended';
 
@@ -21,14 +20,12 @@ class WorkflowInboxItem extends Model
         'responded_at',
         'ended_at',
         'workflow_action_id',
-        'meta',
     ];
 
     protected $casts = [
         'opened_at' => 'datetime',
         'responded_at' => 'datetime',
         'ended_at' => 'datetime',
-        'meta' => 'array',
     ];
 
     public function instance()

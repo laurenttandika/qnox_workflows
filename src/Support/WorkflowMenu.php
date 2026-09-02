@@ -8,11 +8,11 @@ class WorkflowMenu
     {
         $counts = $user ? app(\Qnox\Workflows\Services\WorkflowInbox::class)->counts($user) : [];
 
-        return collect(['new', 'pending', 'attended', 'responded', 'held', 'ended'])
+        return collect(['pending', 'responded', 'ended'])
             ->map(fn (string $category) => [
                 'label' => ucfirst($category),
-                'route' => self::route('inbox.'.$category),
-                'route_parameters' => [],
+                'route' => self::route('inbox.index'),
+                'route_parameters' => ['category' => $category],
                 'badge' => $counts[$category] ?? null,
                 'permission' => config('workflows.permissions.view'),
             ])
@@ -23,16 +23,10 @@ class WorkflowMenu
     {
         return [[
             'label' => 'Workflow Settings',
-            'route' => config('workflows.routes.web.name_prefix', 'workflows.').'dashboard',
+            'route' => self::route('modules.index'),
             'permission' => config('workflows.permissions.manage'),
             'icon' => 'fa fa-project-diagram',
-            'children' => [
-                ['label' => 'Module Groups', 'route' => self::route('groups.index')],
-                ['label' => 'Modules', 'route' => self::route('modules.index')],
-                ['label' => 'Definitions', 'route' => self::route('definitions.index')],
-                ['label' => 'Workflow Permissions', 'route' => self::route('participants.index')],
-                ['label' => 'Number Formats', 'route' => self::route('numbers.index')],
-            ],
+            'children' => [['label' => 'Registered Modules', 'route' => self::route('modules.index')]],
         ]];
     }
 

@@ -1,90 +1,31 @@
 <?php
 
 return [
+    'modules' => [
+        // 'hr.leave' => 'Leave',
+        // 'hr.expenses' => 'Expenses',
+    ],
     'user_model' => App\Models\User::class,
-    'assignment_resolver' => Qnox\Workflows\Services\DefaultAssignmentResolver::class,
-    'assignment_providers' => [
-        'user' => Qnox\Workflows\Assignments\UserAssignmentProvider::class,
+    'providers' => [
+        'users' => Qnox\Workflows\Services\EloquentUserProvider::class,
+        'roles' => Qnox\Workflows\Services\UnconfiguredRoleProvider::class,
     ],
-    'assignment_options' => [
-        'user' => [
-            'label' => 'User',
-            'model' => App\Models\User::class,
-        ],
-        // Add application models when their providers are registered:
-        // 'position' => ['label' => 'Position', 'model' => App\Models\Position::class],
-        // 'unit' => ['label' => 'Unit', 'model' => App\Models\Department::class],
+    'resolvers' => [
+        'supervisor' => Qnox\Workflows\Services\UnconfiguredSupervisorResolver::class,
+        'roles' => Qnox\Workflows\Services\UnconfiguredRoleProvider::class,
     ],
-    'participant_options' => [
-        'user' => [
-            'label' => 'User',
-            'model' => App\Models\User::class,
-        ],
-        // Non-user participant types require a participant provider.
-    ],
-    'participant_providers' => [
-        'user' => Qnox\Workflows\Participants\UserParticipantProvider::class,
-    ],
+    'eligibility' => ['active_attribute' => 'is_active'],
+    'users' => ['label_attributes' => ['name', 'email'], 'search_attributes' => ['name', 'email'], 'option_limit' => 100],
     'notify_channels' => ['mail'],
-
     'routes' => [
-        'web' => [
-            'enabled' => true,
-            'prefix' => 'settings/workflows',
-            'name_prefix' => 'workflows.',
-            'middleware' => ['web', 'auth'],
-        ],
-        'inbox' => [
-            'enabled' => true,
-            'prefix' => 'workflows/inbox',
-            'middleware' => ['web', 'auth'],
-        ],
-        'api' => [
-            'enabled' => true,
-            'legacy_routes' => true,
-            'prefix' => 'api/workflows',
-            'middleware' => ['api', 'auth:sanctum'],
-        ],
+        'web' => ['enabled' => true, 'prefix' => 'settings/workflows', 'name_prefix' => 'workflows.', 'middleware' => ['web', 'auth']],
+        'inbox' => ['enabled' => true, 'prefix' => 'workflows/inbox', 'middleware' => ['web', 'auth']],
+        'api' => ['enabled' => true, 'prefix' => 'api/workflows', 'middleware' => ['api', 'auth:sanctum']],
     ],
-
     'views' => [
-        'layout' => null,
-        'dashboard' => 'workflows::settings.dashboard',
-        'groups' => 'workflows::settings.groups',
-        'modules' => 'workflows::settings.modules',
-        'definitions' => 'workflows::settings.definitions',
-        'definition' => 'workflows::settings.definition',
-        'participants' => 'workflows::settings.participants',
-        'user_permissions' => 'workflows::settings.user-permissions',
-        'numbers' => 'workflows::settings.numbers',
-        'instance' => 'workflows::instances.show',
-        'actions' => 'workflows::actions.buttons',
-        'action_modal' => 'workflows::actions.modal',
+        'modules' => 'workflows::settings.modules', 'definitions' => 'workflows::settings.definitions',
+        'definition' => 'workflows::settings.definition', 'instance' => 'workflows::instances.show',
         'inbox' => 'workflows::inbox.index',
     ],
-
-    'permissions' => [
-        'view' => 'workflows.view',
-        'manage' => 'workflows.manage',
-        'act' => 'workflows.act',
-    ],
-
-    'numbering' => [
-        'default_padding' => 6,
-        'allowed_tokens' => [
-            'prefix', 'number', 'year', 'month', 'day', 'module',
-            'department', 'unit', 'tenant', 'subject_id',
-        ],
-    ],
-
-    'action_labels' => [
-        'submit' => 'Submit',
-        'approve' => 'Approve',
-        'reject' => 'Reject',
-        'return' => 'Return',
-        'hold' => 'Hold',
-        'resume' => 'Resume',
-        'recall' => 'Recall',
-        'complete' => 'Complete',
-    ],
+    'permissions' => ['view' => 'workflows.view', 'manage' => 'workflows.manage', 'act' => 'workflows.act'],
 ];

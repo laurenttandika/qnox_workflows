@@ -1,151 +1,28 @@
-<div class="qnox-workflows">
-    @include('workflows::settings._shell')
-    <h1>{{ $workflow->name }}</h1>
-    <p class="muted">{{ $workflow->group?->name }} @if($workflow->module) / {{ $workflow->module->name }} @endif</p>
-
-    <details class="card"><summary>Edit definition</summary>
-        <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.update', $workflow) }}">
-            @csrf @method('PUT')
-            <div class="fields">
-                <label>Group<select name="workflow_group_id" required>@foreach($groups as $group)<option value="{{ $group->id }}" @selected($workflow->workflow_group_id === $group->id)>{{ $group->name }}</option>@endforeach</select></label>
-                <label>Module<select name="workflow_module_id"><option value="">None</option>@foreach($modules as $module)<option value="{{ $module->id }}" @selected($workflow->workflow_module_id === $module->id)>{{ $module->name }}</option>@endforeach</select></label>
-                <label>Name<input name="name" value="{{ $workflow->name }}" required></label>
-                <label>Slug<input name="slug" value="{{ $workflow->slug }}" required></label>
-                <label><input style="width:auto" type="checkbox" name="is_active" value="1" @checked($workflow->is_active)> Active</label>
-                <button>Save definition</button>
-            </div>
-        </form>
-    </details>
-
-    <h2>Levels</h2>
-    <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.levels.store', $workflow) }}" class="card">
-        @csrf
-        <div class="fields">
-            <label>Name<input name="name" required></label>
-            <label>Sequence<input name="sequence" type="number" min="1" required></label>
-            <label>Assignment mode<select name="assignment_mode"><option value="pooled">Pooled / Attend</option><option value="automatic">Automatic</option><option value="direct">Direct selection</option></select></label>
-            <label>Description<input name="description"></label>
-            <label><input style="width:auto" type="checkbox" name="is_start" value="1"> Start level</label>
-            <label><input style="width:auto" type="checkbox" name="is_terminal" value="1"> Terminal level</label>
-            <label><input style="width:auto" type="checkbox" name="is_approval" value="1" checked> Approval level</label>
-            <label><input style="width:auto" type="checkbox" name="allow_rejection" value="1" checked> Allow rejection</label>
-            <label><input style="width:auto" type="checkbox" name="can_close" value="1" checked> Can close</label>
-            <label><input style="width:auto" type="checkbox" name="is_optional" value="1"> Optional</label>
-            <input type="hidden" name="rules" value="">
-            <button>Add level</button>
-        </div>
-    </form>
-    <div class="card"><table><thead><tr><th>#</th><th>Name</th><th>Assignment</th><th>Start</th><th>Terminal</th><th>Configure</th></tr></thead><tbody>
-    @foreach($workflow->levels as $level)
-        <tr>
-            <td>{{ $level->sequence }}</td><td>{{ $level->name }}</td><td>{{ ucfirst($level->assignment_mode) }}</td><td>{{ $level->is_start ? 'Yes' : '—' }}</td><td>{{ $level->is_terminal ? 'Yes' : '—' }}</td>
-            <td><details><summary>Edit</summary>
-                <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.levels.update', [$workflow, $level]) }}" style="min-width:320px">
-                    @csrf @method('PUT')
-                    <label>Name<input name="name" value="{{ $level->name }}" required></label>
-                    <label>Sequence<input type="number" name="sequence" value="{{ $level->sequence }}" required></label>
-                    <label>Assignment mode<select name="assignment_mode">@foreach(['pooled','automatic','direct'] as $mode)<option value="{{ $mode }}" @selected($level->assignment_mode === $mode)>{{ ucfirst($mode) }}</option>@endforeach</select></label>
-                    <label>Description<textarea name="description">{{ $level->description }}</textarea></label>
-                    @foreach(['is_start'=>'Start','is_terminal'=>'Terminal','is_approval'=>'Approval','is_optional'=>'Optional','allow_rejection'=>'Allow rejection','allow_repeat_participate'=>'Repeat participation','allow_round_robin'=>'Round robin','can_close'=>'Can close'] as $field => $label)
-                        <label><input style="width:auto" type="checkbox" name="{{ $field }}" value="1" @checked($level->{$field})> {{ $label }}</label>
-                    @endforeach
-                    <label>Next message<input name="msg_next" value="{{ $level->msg_next }}"></label>
-                    <label>Action description<input name="action_description" value="{{ $level->action_description }}"></label>
-                    <label>Status description<input name="status_description" value="{{ $level->status_description }}"></label>
-                    <label>Rules JSON<textarea name="rules">{{ $level->rules ? json_encode($level->rules) : '' }}</textarea></label>
-                    <button>Save level</button>
-                </form>
-            </details></td>
-        </tr>
-    @endforeach
-    </tbody></table></div>
-
-    <h2>Definition participants</h2>
-    <p class="muted">These permissions control who may see, attend, and act at each level. Routing assignments are intersected with this list.</p>
-    <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.participants.store', $workflow) }}" class="card">
-        @csrf
-        <div class="fields">
-            <label>Level<select name="workflow_level_id" required>@foreach($workflow->levels as $level)<option value="{{ $level->id }}">{{ $level->name }}</option>@endforeach</select></label>
-            <label>Participant type<select name="type">@foreach(config('workflows.participant_options', []) as $type => $option)<option value="{{ $type }}">{{ $option['label'] ?? ucfirst($type) }}</option>@endforeach</select></label>
-            <label>Participant model ID<input name="participant_id" type="number" min="1" required></label>
-            <label>Role<input name="role" placeholder="approver"></label>
-            <label><input style="width:auto" type="checkbox" name="can_view" value="1" checked> Can view</label>
-            <label><input style="width:auto" type="checkbox" name="can_claim" value="1" checked> Can attend</label>
-            <label><input style="width:auto" type="checkbox" name="can_act" value="1" checked> Can act</label>
-            <button>Save participant</button>
-        </div>
-    </form>
-    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Participant</th><th>Role</th><th>Permissions</th><th>Configure</th></tr></thead><tbody>
-    @forelse($workflow->levels->flatMap->participants as $participant)
-        <tr>
-            <td>{{ $workflow->levels->firstWhere('id', $participant->workflow_level_id)?->name }}</td>
-            <td>{{ $participant->type }}</td>
-            <td>{{ data_get($participant->participant, 'name') ?? data_get($participant->participant, 'email') ?? class_basename($participant->participant_type).' #'.$participant->participant_id }}</td>
-            <td>{{ $participant->role }}</td>
-            <td>{{ $participant->can_view ? 'View ' : '' }}{{ $participant->can_claim ? 'Attend ' : '' }}{{ $participant->can_act ? 'Act' : '' }}</td>
-            <td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.participants.update', [$workflow, $participant]) }}">
-                @csrf @method('PUT')
-                <label>Level<select name="workflow_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($participant->workflow_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
-                <label>Role<input name="role" value="{{ $participant->role }}"></label>
-                @foreach(['can_view'=>'Can view','can_claim'=>'Can attend','can_act'=>'Can act'] as $field => $label)<label><input style="width:auto" type="checkbox" name="{{ $field }}" value="1" @checked($participant->{$field})> {{ $label }}</label>@endforeach
-                <button>Save participant</button>
-            </form></details></td>
-        </tr>
-    @empty <tr><td colspan="6">No explicit participants. Existing level assignments are used as the compatibility fallback.</td></tr> @endforelse
-    </tbody></table></div>
-
-    <h2>Assignments</h2>
-    <p class="muted">Use an application model ID, or criteria such as {"initiator":true} or {"user_ids":[1,2]}.</p>
-    <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.assignments.store', $workflow) }}" class="card">
-        @csrf
-        <div class="fields">
-            <label>Level<select name="workflow_level_id" required>@foreach($workflow->levels as $level)<option value="{{ $level->id }}">{{ $level->name }}</option>@endforeach</select></label>
-            <label>Assignment type<select name="type" required>@foreach(config('workflows.assignment_options', []) as $type => $option)<option value="{{ $type }}">{{ $option['label'] ?? ucfirst($type) }}</option>@endforeach</select></label>
-            <label>Model ID <span class="muted">(optional)</span><input name="assignable_id" type="number" min="1"></label>
-            <label>Criteria JSON <span class="muted">(optional)</span><input name="criteria" placeholder='{"initiator":true}'></label>
-            <button>Add assignment</button>
-        </div>
-    </form>
-    <div class="card"><table><thead><tr><th>Level</th><th>Type</th><th>Model</th><th>ID</th><th>Criteria</th><th>Configure</th></tr></thead><tbody>
-    @forelse($workflow->levels->flatMap->assignments as $assignment)
-        <tr><td>{{ $assignment->level?->name ?? $workflow->levels->firstWhere('id', $assignment->workflow_level_id)?->name }}</td><td>{{ $assignment->type }}</td><td>{{ $assignment->assignable_type }}</td><td>{{ $assignment->assignable_id }}</td><td>{{ json_encode($assignment->criteria) }}</td><td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.assignments.update', [$workflow, $assignment]) }}">
-            @csrf @method('PUT')
-            <label>Level<select name="workflow_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($assignment->workflow_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
-            <label>Type<select name="type">@foreach(config('workflows.assignment_options', []) as $type => $option)<option value="{{ $type }}" @selected($assignment->type === $type)>{{ $option['label'] ?? ucfirst($type) }}</option>@endforeach</select></label>
-            <label>Model ID<input type="number" min="1" name="assignable_id" value="{{ $assignment->assignable_id }}"></label>
-            <label>Criteria JSON<input name="criteria" value="{{ $assignment->criteria ? json_encode($assignment->criteria) : '' }}"></label>
-            <button>Save assignment</button>
-        </form></details></td></tr>
-    @empty <tr><td colspan="6">No assignments configured.</td></tr> @endforelse
-    </tbody></table></div>
-
-    <h2>Actions and transitions</h2>
-    <form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.transitions.store', $workflow) }}" class="card">
-        @csrf
-        <div class="fields">
-            <label>From<select name="from_level_id" required>@foreach($workflow->levels as $level)<option value="{{ $level->id }}">{{ $level->name }}</option>@endforeach</select></label>
-            <label>To<select name="to_level_id"><option value="">Same/terminal</option>@foreach($workflow->levels as $level)<option value="{{ $level->id }}">{{ $level->name }}</option>@endforeach</select></label>
-            <label>Action key<input name="action_key" placeholder="approve" required></label>
-            <label>Button label<input name="label" placeholder="Approve" required></label>
-            <label>Direction<select name="direction"><option>forward</option><option>backward</option><option>stay</option></select></label>
-            <label>Status<input name="status" value="in_progress" required></label>
-            <label>Action form JSON <span class="muted">(optional)</span><textarea name="form_schema" placeholder='{"fields":[{"name":"next_user_id","type":"number","label":"Next user ID","required":true}]}'></textarea></label>
-            <label><input style="width:auto" type="checkbox" name="complete" value="1"> Completes workflow</label>
-            <button>Add transition</button>
-        </div>
-    </form>
-    <div class="card"><table><thead><tr><th>From</th><th>Action</th><th>To</th><th>Status</th><th>Configure</th></tr></thead><tbody>
-    @foreach($workflow->transitions as $transition)<tr><td>{{ $transition->fromLevel?->name }}</td><td>{{ $transition->label }} ({{ $transition->action_key }})</td><td>{{ $transition->toLevel?->name ?? '—' }}</td><td>{{ $transition->status }}</td><td><details><summary>Edit</summary><form method="post" action="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.transitions.update', [$workflow, $transition]) }}">
-        @csrf @method('PUT')
-        <label>From<select name="from_level_id">@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($transition->from_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
-        <label>To<select name="to_level_id"><option value="">Same/terminal</option>@foreach($workflow->levels as $level)<option value="{{ $level->id }}" @selected($transition->to_level_id === $level->id)>{{ $level->name }}</option>@endforeach</select></label>
-        <label>Action key<input name="action_key" value="{{ $transition->action_key }}" required></label>
-        <label>Button label<input name="label" value="{{ $transition->label }}" required></label>
-        <label>Direction<select name="direction">@foreach(['forward','backward','stay'] as $direction)<option value="{{ $direction }}" @selected($transition->direction === $direction)>{{ $direction }}</option>@endforeach</select></label>
-        <label>Status<input name="status" value="{{ $transition->status }}" required></label>
-        <label>Action form JSON<textarea name="form_schema">{{ $transition->form_schema ? json_encode($transition->form_schema) : '' }}</textarea></label>
-        <label><input style="width:auto" type="checkbox" name="complete" value="1" @checked(data_get($transition->meta, 'complete', false))> Completes workflow</label>
-        <button>Save transition</button>
-    </form></details></td></tr>@endforeach
-    </tbody></table></div>
-</div>
+@php
+$saved = $workflow->exists ? $workflow->levels->map(fn($l) => ['id'=>$l->id,'name'=>$l->name,'approver_type'=>$l->approver_type,'approver_role'=>$l->approver_role,'user_ids'=>$l->selectedUsers->pluck('user_id')->all(),'rejection_comment_required'=>$l->rejection_comment_required])->all() : [];
+$levelInputs = old('levels', $saved ?: [['name'=>'','approver_type'=>'supervisor','approver_role'=>null,'user_ids'=>[],'rejection_comment_required'=>true]]);
+@endphp
+<div class="qnox-workflows">@include('workflows::settings._shell')
+<h1>{{ $workflow->exists ? 'Edit' : 'Create' }} {{ $moduleLabel }} workflow</h1>
+<form method="post" action="{{ $workflow->exists ? route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.update', $workflow) : route(config('workflows.routes.web.name_prefix', 'workflows.').'definitions.store') }}" id="workflow-form">
+@csrf @if($workflow->exists) @method('PUT') @endif
+<input type="hidden" name="module_key" value="{{ old('module_key', $workflow->module_key) }}">
+<input type="hidden" name="confirm_reorder" id="confirm-reorder" value="0">
+<div class="card"><label for="workflow-name">Workflow name</label><input id="workflow-name" name="name" value="{{ old('name', $workflow->name) }}" required>@error('name')<span class="error">{{ $message }}</span>@enderror
+<label>Module</label><input value="{{ $moduleLabel }}" readonly aria-readonly="true">
+<label><input style="width:auto" type="checkbox" name="is_active" value="1" @checked(old('is_active', $workflow->is_active ?? true))> Active</label></div>
+<div id="levels">
+@foreach($levelInputs as $i => $level)<section class="card level" data-index="{{ $i }}"><div class="row"><h2>Level <span class="level-number">{{ $i+1 }}</span></h2><div><button type="button" class="secondary up">Move up</button> <button type="button" class="secondary down">Move down</button> <button type="button" class="danger remove">Remove</button></div></div>
+@if(!empty($level['id']))<input type="hidden" data-field="id" name="levels[{{ $i }}][id]" value="{{ $level['id'] }}">@endif
+<label>Name<input data-field="name" name="levels[{{ $i }}][name]" value="{{ $level['name'] ?? '' }}" required></label>@error("levels.$i.name")<span class="error">{{ $message }}</span>@enderror
+<label>Approver<select data-field="approver_type" name="levels[{{ $i }}][approver_type]" class="approver-type"><option value="supervisor" @selected(($level['approver_type']??'')==='supervisor')>Employee supervisor</option><option value="role" @selected(($level['approver_type']??'')==='role')>Role</option><option value="users" @selected(($level['approver_type']??'')==='users')>Selected employees</option></select></label>
+<p class="muted supervisor-help">The applicant's eligible supervisor is resolved when this level is reached.</p>
+<label class="role-field">Role<select data-field="approver_role" name="levels[{{ $i }}][approver_role]"><option value="">Select a role</option>@foreach($roles as $role)<option value="{{ $role['value'] }}" @selected((string)($level['approver_role']??'')===(string)$role['value'])>{{ $role['label'] }}</option>@endforeach</select></label>@error("levels.$i.approver_role")<span class="error">{{ $message }}</span>@enderror
+<label class="users-field">Employees<input class="user-search" type="search" placeholder="Search employees" aria-label="Search employees"><select data-field="user_ids" name="levels[{{ $i }}][user_ids][]" multiple size="6" aria-label="Employee selection">@foreach($users as $user)<option value="{{ $user['value'] }}" @selected(in_array((string)$user['value'],array_map('strval',$level['user_ids']??[]),true))>{{ $user['label'] }}</option>@endforeach</select></label>@error("levels.$i.user_ids")<span class="error">{{ $message }}</span>@enderror
+<label><input style="width:auto" data-field="rejection_comment_required" type="checkbox" name="levels[{{ $i }}][rejection_comment_required]" value="1" @checked($level['rejection_comment_required']??false)> Rejection comment required</label></section>@endforeach
+</div>@error('levels')<p class="error">{{ $message }}</p>@enderror
+<template id="level-template">@php $i='__INDEX__'; $level=[]; @endphp<section class="card level"><div class="row"><h2>Level <span class="level-number"></span></h2><div><button type="button" class="secondary up">Move up</button> <button type="button" class="secondary down">Move down</button> <button type="button" class="danger remove">Remove</button></div></div><label>Name<input data-field="name" required></label><label>Approver<select data-field="approver_type" class="approver-type"><option value="supervisor">Employee supervisor</option><option value="role">Role</option><option value="users">Selected employees</option></select></label><p class="muted supervisor-help">The applicant's eligible supervisor is resolved when this level is reached.</p><label class="role-field">Role<select data-field="approver_role"><option value="">Select a role</option>@foreach($roles as $role)<option value="{{ $role['value'] }}">{{ $role['label'] }}</option>@endforeach</select></label><label class="users-field">Employees<input class="user-search" type="search" placeholder="Search employees" aria-label="Search employees"><select data-field="user_ids" multiple size="6">@foreach($users as $user)<option value="{{ $user['value'] }}">{{ $user['label'] }}</option>@endforeach</select></label><label><input style="width:auto" data-field="rejection_comment_required" type="checkbox" value="1" checked> Rejection comment required</label></section></template>
+<p><button type="button" id="add-level">Add approval level</button> <button type="submit">Save workflow</button></p></form></div>
+<script>
+(()=>{const box=document.querySelector('#levels'),template=document.querySelector('#level-template'),confirmed=document.querySelector('#confirm-reorder');function refresh(){[...box.children].forEach((el,i)=>{el.dataset.index=i;el.querySelector('.level-number').textContent=i+1;el.querySelectorAll('[data-field]').forEach(x=>x.name=`levels[${i}][${x.dataset.field}]${x.multiple?'[]':''}`);const type=el.querySelector('.approver-type').value;el.querySelector('.role-field').hidden=type!=='role';el.querySelector('.users-field').hidden=type!=='users';el.querySelector('.supervisor-help').hidden=type!=='supervisor';});}box.addEventListener('click',e=>{const el=e.target.closest('.level');if(e.target.matches('.remove')){if(box.children.length===1)return alert('A workflow needs at least one level.');if(confirm('Removing a level changes future routing. Continue?')){el.remove();confirmed.value=1;}}if(e.target.matches('.up')&&el.previousElementSibling&&confirm('Reorder this approval level?')){box.insertBefore(el,el.previousElementSibling);confirmed.value=1;}if(e.target.matches('.down')&&el.nextElementSibling&&confirm('Reorder this approval level?')){box.insertBefore(el.nextElementSibling,el);confirmed.value=1;}refresh();});box.addEventListener('change',e=>{if(e.target.matches('.approver-type'))refresh()});box.addEventListener('input',e=>{if(!e.target.matches('.user-search'))return;const term=e.target.value.toLowerCase(),select=e.target.nextElementSibling;[...select.options].forEach(option=>option.hidden=!option.text.toLowerCase().includes(term));});document.querySelector('#add-level').onclick=()=>{box.append(template.content.cloneNode(true));refresh()};refresh();})();
+</script>

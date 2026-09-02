@@ -17,7 +17,7 @@ trait HasWorkflows
     public function currentWorkflowInstance(): ?WorkflowInstance
     {
         return $this->workflowInstances()
-            ->whereNull('completed_at')
+            ->whereIn('status', ['pending', 'in_progress'])
             ->latest('id')
             ->first();
     }

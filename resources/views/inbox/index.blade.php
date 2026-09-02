@@ -11,7 +11,7 @@
     <h1>Workflow Inbox</h1>
     <nav>
         @foreach($categories as $name)
-            <a class="{{ $category === $name ? 'active' : '' }}" href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'inbox.'.$name) }}">
+            <a class="{{ $category === $name ? 'active' : '' }}" href="{{ route(config('workflows.routes.web.name_prefix', 'workflows.').'inbox.index', ['category' => $name]) }}">
                 {{ ucfirst($name) }} <span class="badge">{{ $counts[$name] ?? 0 }}</span>
             </a>
         @endforeach
@@ -30,7 +30,7 @@
                             {{ class_basename($item->instance->subject_type) }} #{{ $item->instance->subject_id }}
                         @endif
                     </td>
-                    <td>{{ $item->instanceLevel?->level?->name }}</td>
+                    <td>{{ $item->instanceLevel?->level_name }}</td>
                     <td>{{ $item->instance->status }}</td>
                     <td>{{ $item->created_at?->diffForHumans() }}</td>
                 </tr>

@@ -1,48 +1,20 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Qnox\Workflows\Http\Controllers\InstanceController;
-use Qnox\Workflows\Http\Controllers\SettingsController;
-use Qnox\Workflows\Http\Controllers\InboxController;
+use Qnox\Workflows\Http\Controllers\{InboxController, InstanceController, SettingsController};
 
 Route::prefix(config('workflows.routes.web.prefix', 'settings/workflows'))
     ->middleware(config('workflows.routes.web.middleware', ['web', 'auth']))
     ->name(config('workflows.routes.web.name_prefix', 'workflows.'))
     ->group(function () {
-        Route::get('/', [SettingsController::class, 'dashboard'])->name('dashboard');
-
-        Route::get('/groups', [SettingsController::class, 'groups'])->name('groups.index');
-        Route::post('/groups', [SettingsController::class, 'storeGroup'])->name('groups.store');
-        Route::put('/groups/{group}', [SettingsController::class, 'updateGroup'])->name('groups.update');
-
-        Route::get('/modules', [SettingsController::class, 'modules'])->name('modules.index');
-        Route::post('/modules', [SettingsController::class, 'storeModule'])->name('modules.store');
-        Route::put('/modules/{module}', [SettingsController::class, 'updateModule'])->name('modules.update');
-
-        Route::get('/definitions', [SettingsController::class, 'definitions'])->name('definitions.index');
-        Route::post('/definitions', [SettingsController::class, 'storeDefinition'])->name('definitions.store');
-        Route::get('/definitions/{workflow}', [SettingsController::class, 'definition'])->name('definitions.show');
-        Route::put('/definitions/{workflow}', [SettingsController::class, 'updateDefinition'])->name('definitions.update');
-        Route::post('/definitions/{workflow}/levels', [SettingsController::class, 'storeLevel'])->name('definitions.levels.store');
-        Route::put('/definitions/{workflow}/levels/{level}', [SettingsController::class, 'updateLevel'])->name('definitions.levels.update');
-        Route::post('/definitions/{workflow}/assignments', [SettingsController::class, 'storeAssignment'])->name('definitions.assignments.store');
-        Route::put('/definitions/{workflow}/assignments/{assignment}', [SettingsController::class, 'updateAssignment'])->name('definitions.assignments.update');
-        Route::post('/definitions/{workflow}/participants', [SettingsController::class, 'storeParticipant'])->name('definitions.participants.store');
-        Route::put('/definitions/{workflow}/participants/{participant}', [SettingsController::class, 'updateParticipant'])->name('definitions.participants.update');
-        Route::post('/definitions/{workflow}/transitions', [SettingsController::class, 'storeTransition'])->name('definitions.transitions.store');
-        Route::put('/definitions/{workflow}/transitions/{transition}', [SettingsController::class, 'updateTransition'])->name('definitions.transitions.update');
-
-        Route::get('/participants', [SettingsController::class, 'participants'])->name('participants.index');
-        Route::get('/participants/users/{user}', [SettingsController::class, 'userPermissions'])->name('participants.user');
-        Route::put('/participants/users/{user}', [SettingsController::class, 'updateUserPermissions'])->name('participants.user.update');
-
-        Route::get('/numbers', [SettingsController::class, 'numbers'])->name('numbers.index');
-        Route::post('/numbers', [SettingsController::class, 'storeNumber'])->name('numbers.store');
-        Route::put('/numbers/{sequence}', [SettingsController::class, 'updateNumber'])->name('numbers.update');
-        Route::get('/numbers/{sequence}/preview', [SettingsController::class, 'previewNumber'])->name('numbers.preview');
-
+        Route::get('/', [SettingsController::class, 'modules'])->name('modules.index');
+        Route::get('/modules/{module}/workflows', [SettingsController::class, 'definitions'])->where('module', '.*')->name('definitions.index');
+        Route::get('/modules/{module}/workflows/create', [SettingsController::class, 'create'])->where('module', '.*')->name('definitions.create');
+        Route::post('/workflows', [SettingsController::class, 'store'])->name('definitions.store');
+        Route::get('/workflows/{workflow}/edit', [SettingsController::class, 'edit'])->name('definitions.edit');
+        Route::put('/workflows/{workflow}', [SettingsController::class, 'update'])->name('definitions.update');
         Route::get('/instances/{instance}', [InstanceController::class, 'show'])->name('instances.show');
-        Route::post('/instances/{instance}/act', [InstanceController::class, 'act'])->name('instances.act');
+        Route::post('/instances/{instance}/decide', [InstanceController::class, 'decide'])->name('instances.decide');
     });
 
 if (config('workflows.routes.inbox.enabled', true)) {
@@ -53,12 +25,5 @@ if (config('workflows.routes.inbox.enabled', true)) {
             Route::get('/', [InboxController::class, 'index'])->name('index');
             Route::get('/counts', [InboxController::class, 'counts'])->name('counts');
             Route::get('/item/{instance}', [InboxController::class, 'show'])->name('show');
-            Route::post('/item/{instance}/claim', [InboxController::class, 'claim'])->name('claim');
-            foreach (['new', 'pending', 'attended', 'responded', 'held', 'ended'] as $category) {
-                Route::get("/{$category}", [InboxController::class, 'index'])
-                    ->defaults('category', $category)
-                    ->name($category);
-            }
-            Route::get('/{category}', [InboxController::class, 'index'])->name('category');
         });
 }

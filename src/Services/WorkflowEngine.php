@@ -2,426 +2,179 @@
 
 namespace Qnox\Workflows\Services;
 
-use Illuminate\Contracts\Auth\Authenticatable as User;
-use Illuminate\Database\DatabaseManager as DB;
-use Qnox\Workflows\Models\Workflow;
-use Qnox\Workflows\Models\WorkflowAction;
-use Qnox\Workflows\Models\WorkflowInstance;
-use Qnox\Workflows\Models\WorkflowInstanceLevel;
-use Qnox\Workflows\Models\WorkflowLevel;
-use Qnox\Workflows\Models\WorkflowTransition;
-use Qnox\Workflows\Services\Guards\GuardEvaluator;
-use Qnox\Workflows\Support\WorkflowStatuses;
-use Qnox\Workflows\Events\{
-    WorkflowActioned,
-    WorkflowActioning,
-    WorkflowCompleted,
-    WorkflowHeld,
-    WorkflowLevelEntered,
-    WorkflowLevelExited,
-    WorkflowRecalled,
-    WorkflowRejected,
-    WorkflowResumed,
-    WorkflowReturned,
-    WorkflowStarted,
-    WorkflowStarting
-};
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Collection;
+use Qnox\Workflows\Contracts\{RoleAssigneeResolver, SupervisorResolver, UserProvider};
+use Qnox\Workflows\Events\{ApprovalLevelEntered, ApprovalRecorded, WorkflowApproved, WorkflowRejected, WorkflowStarted};
+use Qnox\Workflows\Exceptions\{WorkflowConflictException, WorkflowException};
+use Qnox\Workflows\Models\{Workflow, WorkflowAction, WorkflowInboxItem, WorkflowInstance, WorkflowInstanceApprover, WorkflowInstanceLevel, WorkflowLevel};
 
 class WorkflowEngine
 {
     public function __construct(
-        protected DB $db,
-        protected GuardEvaluator $guards,
-        protected WorkflowInbox $inbox,
-        protected WorkflowParticipation $participation,
+        protected DatabaseManager $db,
+        protected SupervisorResolver $supervisors,
+        protected RoleAssigneeResolver $roles,
+        protected UserProvider $users,
     ) {}
 
-    public function start($subject, Workflow $workflow, User $initiator, array $context = []): WorkflowInstance
+    public function start(object $subject, Workflow $workflow, Authenticatable $initiator, array $context = []): WorkflowInstance
     {
-        $start = $workflow->startLevel() ?? $workflow->levels()->orderBy('sequence')->firstOrFail();
-        $context = $this->normalizeContext($context, $initiator);
+        if (!$workflow->is_active) throw new WorkflowException('The selected workflow is inactive.');
+        $first = $workflow->levels()->with('selectedUsers')->orderBy('sequence')->first();
+        if (!$first) throw new WorkflowException('The selected workflow has no approval levels.');
 
-        return $this->db->transaction(function () use ($subject, $workflow, $start, $initiator, $context) {
-            $pending = new WorkflowInstance([
-                'workflow_id' => $workflow->id,
-                'subject_type' => $this->morphType($subject),
-                'subject_id' => $subject->getKey(),
-                'initiator_type' => $this->morphType($initiator),
-                'initiator_id' => $initiator->getAuthIdentifier(),
-                'current_level_id' => $start->id,
-                'status' => WorkflowStatuses::PENDING,
-                'context' => $context,
-            ]);
-            event(new WorkflowStarting($pending, $initiator, null, $context));
-
+        return $this->db->transaction(function () use ($subject, $workflow, $initiator, $context, $first) {
+            $approvers = $this->resolveApprovers($first, $initiator, $context);
+            $now = now();
             $instance = WorkflowInstance::create([
                 'workflow_id' => $workflow->id,
-                'subject_type' => $this->morphType($subject),
-                'subject_id' => $subject->getKey(),
-                'initiator_type' => $this->morphType($initiator),
-                'initiator_id' => $initiator->getAuthIdentifier(),
-                'current_level_id' => $start->id,
-                'status' => WorkflowStatuses::PENDING,
-                'context' => $context,
+                'subject_type' => $this->type($subject), 'subject_id' => $subject->getKey(),
+                'initiator_type' => $this->type($initiator), 'initiator_id' => $initiator->getAuthIdentifier(),
+                'current_level_id' => $first->id, 'status' => 'in_progress', 'context' => $context, 'submitted_at' => $now,
             ]);
-
-            $history = $this->createHistoryEntry($instance, $start, WorkflowStatuses::PENDING);
-            $this->inbox->createForLevel($instance->loadMissing('workflow'), $history, $start);
-            $this->notifyNextApprovers($instance, $start, $history);
-
-            $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level']);
-            $this->afterCommit(fn () => event(new WorkflowStarted($result, $initiator, null, $context)));
-            $this->afterCommit(fn () => event(new WorkflowLevelEntered($result, $initiator)));
-
+            $snapshot = $this->enterLevel($instance, $first, $approvers, $now);
+            $result = $instance->fresh($this->relations());
+            $this->afterCommit(fn () => event(new WorkflowStarted($result, $initiator)));
+            $this->afterCommit(fn () => event(new ApprovalLevelEntered($result, $initiator, null, ['instance_level_id' => $snapshot->id])));
             return $result;
         });
     }
 
-    public function submit(WorkflowInstance $instance, User $actor, array $payload = []): WorkflowInstance
+    public function approve(WorkflowInstance $instance, Authenticatable $actor, ?string $comment = null): WorkflowInstance
+    { return $this->decide($instance, $actor, 'approve', $comment); }
+
+    public function reject(WorkflowInstance $instance, Authenticatable $actor, ?string $comment = null): WorkflowInstance
+    { return $this->decide($instance, $actor, 'reject', $comment); }
+
+    public function canApprove(WorkflowInstance $instance, Authenticatable $actor): bool { return $this->canDecide($instance, $actor); }
+    public function canReject(WorkflowInstance $instance, Authenticatable $actor): bool { return $this->canDecide($instance, $actor); }
+    public function currentApprovalLevel(WorkflowInstance $instance): ?WorkflowInstanceLevel { return $instance->currentApprovalLevel(); }
+    public function resolvedApprovers(WorkflowInstance $instance): Collection { return $instance->currentApprovalLevel()?->approvers()->get() ?? collect(); }
+    public function approvalHistory(WorkflowInstance $instance): Collection { return $instance->actions()->oldest()->get(); }
+    public function availableActions(WorkflowInstance $instance, Authenticatable $actor): array
+    { return $this->canDecide($instance, $actor) ? [['action' => 'approve', 'label' => 'Approve'], ['action' => 'reject', 'label' => 'Reject']] : []; }
+
+    protected function decide(WorkflowInstance $instance, Authenticatable $actor, string $decision, ?string $comment): WorkflowInstance
     {
-        return $this->act($instance, 'submit', $actor, $payload);
-    }
+        return $this->db->transaction(function () use ($instance, $actor, $decision, $comment) {
+            $instance = WorkflowInstance::query()->with('workflow')->lockForUpdate()->findOrFail($instance->id);
+            if (in_array($instance->status, ['approved', 'rejected', 'cancelled'], true)) throw new WorkflowConflictException('This workflow has already reached a final outcome.');
+            $snapshot = WorkflowInstanceLevel::query()->with('approvers')->where('workflow_instance_id', $instance->id)
+                ->where('status', 'pending')->lockForUpdate()->latest('id')->first();
+            if (!$snapshot) throw new WorkflowConflictException('There is no active approval level.');
+            $eligible = $snapshot->approvers->first(fn ($item) => $item->status === 'pending' && $this->same($item, $actor));
+            if (!$eligible || !$this->users->isEligible($actor) || $this->isInitiator($instance, $actor)) throw new WorkflowException('You are not eligible to decide this approval level.');
+            if ($decision === 'reject' && $snapshot->rejection_comment_required && trim((string) $comment) === '') throw new WorkflowException('A rejection comment is required for this approval level.');
 
-    public function approve(WorkflowInstance $instance, User $actor, array $payload = []): WorkflowInstance
-    {
-        return $this->act($instance, 'approve', $actor, $payload);
-    }
-
-    public function reject(WorkflowInstance $instance, User $actor, array $payload = []): WorkflowInstance
-    {
-        return $this->act($instance, 'reject', $actor, $payload);
-    }
-
-    public function hold(WorkflowInstance $instance, User $actor, array $payload = []): WorkflowInstance
-    {
-        return $this->act($instance, 'hold', $actor, $payload);
-    }
-
-    public function return(WorkflowInstance $instance, User $actor, array $payload = []): WorkflowInstance
-    {
-        return $this->act($instance, 'return', $actor, $payload);
-    }
-
-    /** @return array<int,array{action_key:string,label:string,to_level_id:int|null,direction:string,status:string,form_schema:array|null}> */
-    public function availableActions(WorkflowInstance $instance, User $actor): array
-    {
-        $level = $instance->currentLevel()->with(['outgoingTransitions', 'assignments'])->firstOrFail();
-
-        if (!$this->actorCanAct($instance, $level, $actor)) {
-            return [];
-        }
-
-        return $level->outgoingTransitions
-            ->filter(fn (WorkflowTransition $transition) => $this->guards->passes($transition->guard, $instance, $actor))
-            ->map(fn (WorkflowTransition $transition) => [
-                'action_key' => $transition->action_key,
-                'label' => $transition->label ?: $this->labelFor($transition->action_key),
-                'to_level_id' => $transition->to_level_id ? (int) $transition->to_level_id : null,
-                'direction' => $transition->direction,
-                'status' => $this->transitionStatus($transition),
-                'form_schema' => $transition->form_schema,
-            ])
-            ->values()
-            ->all();
-    }
-
-    public function act(WorkflowInstance $instance, string $actionKey, User $actor, array $payload = []): WorkflowInstance
-    {
-        return $this->db->transaction(function () use ($instance, $actionKey, $actor, $payload) {
-            /** @var WorkflowInstance $instance */
-            $instance = WorkflowInstance::query()->lockForUpdate()->findOrFail($instance->id);
-
-            /** @var WorkflowLevel $current */
-            $current = WorkflowLevel::query()->with(['assignments', 'outgoingTransitions'])->lockForUpdate()->findOrFail($instance->current_level_id);
-
-            if (!$this->actorCanAct($instance, $current, $actor)) {
-                abort(403, 'Not eligible for this level.');
-            }
-
-            $transition = $current->outgoingTransitions
-                ->firstWhere('action_key', $actionKey);
-
-            if ($transition && !$this->guards->passes($transition->guard, $instance, $actor, $payload)) {
-                abort(422, 'Transition guard failed.');
-            }
-
-            if (!$transition) {
-                abort(422, 'Action is not available for the current workflow level.');
-            }
-
-            event(new WorkflowActioning($instance, $actor, $transition, $payload));
-
-            $resolution = $this->resolveTransitionAction($instance, $current, $transition, $actionKey);
-            $leavesLevel = $resolution['to_level'] !== null
-                || $resolution['instance_status'] === WorkflowStatuses::COMPLETED;
-
-            $currentHistory = $this->currentHistory($instance, $current);
-            if ($currentHistory && $leavesLevel) {
-                $currentHistory->update([
-                    'exited_at' => now(),
-                    'forward_date' => now(),
-                ]);
-            }
-            if ($leavesLevel) {
-                $this->afterCommit(fn () => event(new WorkflowLevelExited(
-                    $instance->fresh(['currentLevel', 'workflow.module']),
-                    $actor,
-                    $transition,
-                    $payload
-                )));
-            }
-
+            $now = now();
             $action = WorkflowAction::create([
-                'workflow_instance_id' => $instance->id,
-                'from_level_id' => $current->id,
-                'to_level_id' => $resolution['to_level']?->id,
-                'actor_type' => $this->morphType($actor),
-                'actor_id' => $actor->getAuthIdentifier(),
-                'action_key' => $actionKey,
-                'status' => $resolution['instance_status'],
-                'comment' => $payload['comment'] ?? $payload['comments'] ?? null,
-                'payload' => $payload,
+                'workflow_instance_id' => $instance->id, 'workflow_instance_level_id' => $snapshot->id,
+                'actor_type' => $this->type($actor), 'actor_id' => $actor->getAuthIdentifier(), 'action' => $decision, 'comment' => $comment,
             ]);
+            $snapshot->update(['status' => $decision === 'approve' ? 'approved' : 'rejected', 'actioned_at' => $now, 'exited_at' => $now]);
+            $snapshot->approvers()->update(['status' => 'closed', 'acted_at' => $now]);
+            $eligible->update(['status' => $decision === 'approve' ? 'approved' : 'rejected', 'acted_at' => $now]);
+            $this->closeInbox($snapshot, $action, $actor, $now);
 
-            if ($currentHistory && $leavesLevel) {
-                $this->inbox->closeLevel($currentHistory, $actor, $action);
-            } elseif ($currentHistory) {
-                $this->inbox->recordResponse($currentHistory, $actor, $action);
+            if ($decision === 'reject') {
+                $instance->update(['status' => 'rejected', 'rejected_at' => $now, 'last_action_at' => $now]);
+                return $this->dispatchFinal($instance, $actor, 'reject', $comment);
             }
 
-            $instanceUpdates = [
-                'status' => $resolution['instance_status'],
-                'current_level_id' => $resolution['to_level']?->id ?? $current->id,
-                'last_action_at' => now(),
-            ];
-
-            if (($transition->meta['mark_submitted'] ?? false) || ($actionKey === 'submit' && !$instance->submitted_at)) {
-                $instanceUpdates['submitted_at'] = now();
+            $next = $instance->workflow->levels()->with('selectedUsers')->where('sequence', '>', $snapshot->level_sequence)->orderBy('sequence')->first();
+            if (!$next) {
+                $instance->update(['status' => 'approved', 'current_level_id' => null, 'approved_at' => $now, 'last_action_at' => $now]);
+                return $this->dispatchFinal($instance, $actor, 'approve', $comment);
             }
-
-            if ($resolution['instance_status'] === WorkflowStatuses::COMPLETED) {
-                $instanceUpdates['completed_at'] = now();
-            }
-
-            $instance->update($instanceUpdates);
-
-            if ($resolution['to_level']) {
-                $nextHistory = $this->createHistoryEntry(
-                    $instance->fresh(),
-                    $resolution['to_level'],
-                    $resolution['history_status'],
-                    $currentHistory,
-                    $actionKey,
-                    $payload['comment'] ?? $payload['comments'] ?? null,
-                    $payload['next_user_id'] ?? null
-                );
-                $this->inbox->createForLevel(
-                    $instance->fresh()->loadMissing('workflow'),
-                    $nextHistory,
-                    $resolution['to_level']
-                );
-
-                if (!in_array($resolution['instance_status'], [WorkflowStatuses::COMPLETED, WorkflowStatuses::ON_HOLD], true)) {
-                    $this->notifyNextApprovers(
-                        $instance->fresh(['currentLevel', 'workflow']),
-                        $resolution['to_level'],
-                        $nextHistory
-                    );
-                }
-            } elseif ($currentHistory) {
-                $currentHistory->update([
-                    'status' => $resolution['history_status'],
-                    'action_key' => $actionKey,
-                    'comments' => $payload['comment'] ?? $payload['comments'] ?? null,
-                ]);
-            }
-
-            if ($resolution['instance_status'] === WorkflowStatuses::COMPLETED) {
-                $this->inbox->closeInstance($instance);
-            }
-
-            $result = $instance->fresh(['currentLevel', 'workflow.module', 'history.level', 'actions']);
-            $this->afterCommit(fn () => event(new WorkflowActioned($result, $actor, $transition, $payload)));
-
-            if ($resolution['to_level']) {
-                $this->afterCommit(fn () => event(new WorkflowLevelEntered($result, $actor, $transition, $payload)));
-            }
-
-            if ($eventClass = $this->eventForAction($actionKey, $resolution['instance_status'])) {
-                $this->afterCommit(fn () => event(new $eventClass($result, $actor, $transition, $payload)));
-            }
-
+            $approvers = $this->resolveApprovers($next, $instance->initiator()->firstOrFail(), $instance->context ?? []);
+            $instance->update(['current_level_id' => $next->id, 'last_action_at' => $now]);
+            $nextSnapshot = $this->enterLevel($instance, $next, $approvers, $now);
+            $result = $instance->fresh($this->relations());
+            $this->afterCommit(fn () => event(new ApprovalRecorded($result, $actor, null, ['action' => 'approve'])));
+            $this->afterCommit(fn () => event(new ApprovalLevelEntered($result, $actor, null, ['instance_level_id' => $nextSnapshot->id])));
             return $result;
         });
     }
 
-    public function notifyNextApprovers(
-        WorkflowInstance $instance,
-        WorkflowLevel $level,
-        ?WorkflowInstanceLevel $history = null
-    ): void
+    protected function dispatchFinal(WorkflowInstance $instance, Authenticatable $actor, string $decision, ?string $comment): WorkflowInstance
     {
-        $assignees = $this->participation->eligibleUsers($level, $instance->context ?? []);
-
-        if ($level->assignment_mode !== 'pooled' && $history?->assigned_to_id) {
-            $assignees = $assignees->filter(fn ($user) =>
-                $this->morphType($user) === $history->assigned_to_type
-                && (string) $user->getAuthIdentifier() === (string) $history->assigned_to_id
-            );
-        }
-
-        foreach ($assignees as $notifiable) {
-            $notifiable->notify(new \Qnox\Workflows\Notifications\NextApproverNotification($instance->fresh(['currentLevel'])));
-        }
+        $result = $instance->fresh($this->relations());
+        $this->afterCommit(fn () => event(new ApprovalRecorded($result, $actor, null, ['action' => $decision])));
+        $this->afterCommit(fn () => event($decision === 'approve' ? new WorkflowApproved($result, $actor) : new WorkflowRejected($result, $actor, null, ['comment' => $comment])));
+        return $result;
     }
 
-    protected function normalizeContext(array $context, User $initiator): array
+    public function cancel(WorkflowInstance $instance, Authenticatable $actor, ?string $comment = null): WorkflowInstance
     {
-        return array_replace_recursive($context, [
-            'initiator' => [
-                'id' => $initiator->getAuthIdentifier(),
-                'type' => $this->morphType($initiator),
-            ],
-        ]);
+        return $this->db->transaction(function () use ($instance, $actor, $comment) {
+            $instance = WorkflowInstance::query()->lockForUpdate()->findOrFail($instance->id);
+            if (in_array($instance->status, ['approved', 'rejected', 'cancelled'], true)) throw new WorkflowConflictException('This workflow has already reached a final outcome.');
+            if (!$this->isInitiator($instance, $actor)) throw new WorkflowException('Only the initiator may cancel this workflow.');
+            $now = now();
+            $snapshot = $instance->history()->where('status', 'pending')->lockForUpdate()->latest('id')->first();
+            if (!$snapshot) throw new WorkflowConflictException('There is no active approval level.');
+            $action = WorkflowAction::create([
+                'workflow_instance_id' => $instance->id, 'workflow_instance_level_id' => $snapshot->id,
+                'actor_type' => $this->type($actor), 'actor_id' => $actor->getAuthIdentifier(), 'action' => 'cancel', 'comment' => $comment,
+            ]);
+            $snapshot->update(['status' => 'cancelled', 'actioned_at' => $now, 'exited_at' => $now]);
+            $snapshot->approvers()->update(['status' => 'closed', 'acted_at' => $now]);
+            $snapshot->inboxItems()->update(['status' => 'ended', 'ended_at' => $now, 'workflow_action_id' => $action->id, 'updated_at' => $now]);
+            $instance->update(['status' => 'cancelled', 'cancelled_at' => $now, 'last_action_at' => $now]);
+            $result = $instance->fresh($this->relations());
+            $this->afterCommit(fn () => event(new \Qnox\Workflows\Events\WorkflowCancelled($result, $actor, null, ['comment' => $comment])));
+            return $result;
+        });
     }
 
-    protected function resolveTransitionAction(
-        WorkflowInstance $instance,
-        WorkflowLevel $current,
-        WorkflowTransition $transition,
-        string $actionKey
-    ): array {
-        $to = $transition->to_level_id ? $transition->toLevel()->firstOrFail() : null;
-        $status = $this->transitionStatus($transition);
-        $completes = $status === WorkflowStatuses::COMPLETED
-            || ($to?->is_terminal ?? false)
-            || (($transition->meta['complete'] ?? false) === true);
-
-        return [
-            'to_level' => $to,
-            'instance_status' => $completes ? WorkflowStatuses::COMPLETED : $status,
-            'history_status' => $completes ? WorkflowStatuses::COMPLETED : $status,
-        ];
-    }
-
-    protected function createHistoryEntry(
-        WorkflowInstance $instance,
-        WorkflowLevel $level,
-        string $status,
-        ?WorkflowInstanceLevel $parent = null,
-        ?string $actionKey = null,
-        ?string $comments = null,
-        int|string|null $preferredUserId = null
-    ): WorkflowInstanceLevel {
-        $eligible = $this->participation->eligibleUsers($level, $instance->context ?? []);
-        if ($eligible->isEmpty()) {
-            abort(422, "No eligible participants are configured for workflow level [{$level->name}].");
-        }
-        $preferredUserId ??= data_get($instance->context, 'next_user_id');
-        $assignee = match ($level->assignment_mode) {
-            'pooled' => null,
-            'direct' => $eligible->first(fn ($user) =>
-                (string) $user->getAuthIdentifier() === (string) $preferredUserId
-            ),
-            default => $eligible->first(),
+    protected function resolveApprovers(WorkflowLevel $level, Authenticatable $initiator, array $context): Collection
+    {
+        $resolved = match ($level->approver_type) {
+            'supervisor' => collect([$this->supervisors->resolve($initiator, $context)])->filter(),
+            'role' => $this->roles->resolve($level->approver_role, $context),
+            'users' => $this->users->findMany($level->selectedUsers->pluck('user_id')->all()),
+            default => throw new WorkflowException("Unsupported approver type [{$level->approver_type}]."),
         };
+        $resolved = $resolved->filter(fn ($user) => $user instanceof Authenticatable && $this->users->isEligible($user))
+            ->reject(fn ($user) => $this->type($user) === $this->type($initiator) && (string) $user->getAuthIdentifier() === (string) $initiator->getAuthIdentifier())
+            ->unique(fn ($user) => $this->type($user).':'.$user->getAuthIdentifier())->values();
+        if ($resolved->isEmpty()) throw new WorkflowException("No eligible approvers could be resolved for level [{$level->name}].");
+        return $resolved;
+    }
 
-        if ($level->assignment_mode === 'direct' && !$assignee) {
-            abort(422, 'A permitted next user is required for the direct-assignment level.');
-        }
-
-        return $instance->history()->create([
-            'workflow_level_id' => $level->id,
-            'parent_id' => $parent?->id,
-            'assigned_to_type' => $assignee ? $this->morphType($assignee) : null,
-            'assigned_to_id' => $assignee?->getAuthIdentifier(),
-            'status' => $status,
-            'action_key' => $actionKey,
-            'comments' => $comments,
-            'entered_at' => now(),
-            'receive_date' => now(),
-            'meta' => [
-                'level_name' => $level->name,
-                'status_description' => $level->status_description,
-            ],
+    protected function enterLevel(WorkflowInstance $instance, WorkflowLevel $level, Collection $approvers, mixed $now): WorkflowInstanceLevel
+    {
+        $snapshot = $instance->history()->create([
+            'workflow_level_id' => $level->id, 'level_name' => $level->name, 'level_sequence' => $level->sequence,
+            'approver_type' => $level->approver_type, 'rejection_comment_required' => $level->rejection_comment_required,
+            'status' => 'pending', 'entered_at' => $now,
         ]);
-    }
-
-    protected function currentHistory(WorkflowInstance $instance, WorkflowLevel $current): ?WorkflowInstanceLevel
-    {
-        return $instance->history()
-            ->where('workflow_level_id', $current->id)
-            ->whereNull('exited_at')
-            ->latest('id')
-            ->first();
-    }
-
-    protected function labelFor(string $actionKey): string
-    {
-        return config('workflows.action_labels.' . $actionKey)
-            ?: ucfirst(str_replace('_', ' ', $actionKey));
-    }
-
-    protected function transitionStatus(WorkflowTransition $transition): string
-    {
-        return $transition->status
-            ?: data_get($transition->meta, 'status')
-            ?: WorkflowStatuses::IN_PROGRESS;
-    }
-
-    protected function afterCommit(callable $callback): void
-    {
-        $this->db->connection()->afterCommit($callback);
-    }
-
-    protected function eventForAction(string $actionKey, string $status): ?string
-    {
-        if ($status === WorkflowStatuses::COMPLETED) {
-            return WorkflowCompleted::class;
+        foreach ($approvers as $user) {
+            $recipient = ['approver_type' => $this->type($user), 'approver_id' => $user->getAuthIdentifier()];
+            $snapshot->approvers()->create($recipient + ['status' => 'pending']);
+            WorkflowInboxItem::create(['workflow_instance_id' => $instance->id, 'workflow_instance_level_id' => $snapshot->id,
+                'recipient_type' => $recipient['approver_type'], 'recipient_id' => $recipient['approver_id'], 'status' => 'pending']);
         }
-
-        return match ($status) {
-            WorkflowStatuses::REJECTED => WorkflowRejected::class,
-            WorkflowStatuses::RETURNED => WorkflowReturned::class,
-            WorkflowStatuses::ON_HOLD => WorkflowHeld::class,
-            WorkflowStatuses::RECALLED => WorkflowRecalled::class,
-            default => match ($actionKey) {
-            'reject' => WorkflowRejected::class,
-            'return' => WorkflowReturned::class,
-            'hold' => WorkflowHeld::class,
-            'resume' => WorkflowResumed::class,
-            'recall' => WorkflowRecalled::class,
-            default => null,
-            },
-        };
+        return $snapshot;
     }
 
-    protected function actorCanAct(
-        WorkflowInstance $instance,
-        WorkflowLevel $level,
-        User $actor
-    ): bool {
-        $eligible = $this->participation->eligibleUsers($level, $instance->context ?? []);
-        $isEligible = $eligible->contains(fn ($user) =>
-            $this->morphType($user) === $this->morphType($actor)
-            && (string) $user->getAuthIdentifier() === (string) $actor->getAuthIdentifier()
-        );
-
-        if (!$isEligible || !$this->participation->can($actor, $level, 'can_act', $instance->context ?? [])) {
-            return false;
-        }
-
-        $track = $this->currentHistory($instance, $level);
-        if (!$track?->assigned_to_id) {
-            return false;
-        }
-
-        return $track->assigned_to_type === $this->morphType($actor)
-            && (string) $track->assigned_to_id === (string) $actor->getAuthIdentifier();
-    }
-
-    protected function morphType(object $model): string
+    protected function closeInbox(WorkflowInstanceLevel $level, WorkflowAction $action, Authenticatable $actor, mixed $now): void
     {
-        return method_exists($model, 'getMorphClass') ? $model->getMorphClass() : get_class($model);
+        $level->inboxItems()->update(['status' => 'ended', 'ended_at' => $now, 'workflow_action_id' => $action->id, 'updated_at' => $now]);
+        $level->inboxItems()->where('recipient_type', $this->type($actor))->where('recipient_id', $actor->getAuthIdentifier())->update(['status' => 'responded', 'responded_at' => $now]);
     }
+
+    protected function canDecide(WorkflowInstance $instance, Authenticatable $actor): bool
+    {
+        if ($instance->status !== 'in_progress' || !$this->users->isEligible($actor) || $this->isInitiator($instance, $actor)) return false;
+        return $instance->history()->where('status', 'pending')->whereHas('approvers', fn ($q) => $q
+            ->where('approver_type', $this->type($actor))->where('approver_id', $actor->getAuthIdentifier())->where('status', 'pending'))->exists();
+    }
+    protected function same(WorkflowInstanceApprover $item, Authenticatable $actor): bool { return $item->approver_type === $this->type($actor) && (string) $item->approver_id === (string) $actor->getAuthIdentifier(); }
+    protected function isInitiator(WorkflowInstance $instance, Authenticatable $actor): bool { return $instance->initiator_type === $this->type($actor) && (string) $instance->initiator_id === (string) $actor->getAuthIdentifier(); }
+    protected function type(object $model): string { return method_exists($model, 'getMorphClass') ? $model->getMorphClass() : get_class($model); }
+    protected function afterCommit(callable $callback): void { $this->db->connection()->afterCommit($callback); }
+    protected function relations(): array { return ['workflow', 'currentLevel', 'history.approvers', 'actions']; }
 }
