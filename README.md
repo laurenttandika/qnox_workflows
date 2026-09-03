@@ -10,6 +10,20 @@ php artisan vendor:publish --tag=qnox-workflows-config
 php artisan migrate
 ```
 
+The package views are loaded automatically under the `workflows::` namespace, so publishing them is optional. To customize the settings, inbox, or instance screens, publish them into the consuming application:
+
+```bash
+php artisan vendor:publish --tag=qnox-workflows-views
+```
+
+Laravel copies them to `resources/views/vendor/workflows`. Those published files override the package templates. After upgrading the package, compare customized copies with the current package views; use `--force` only when you intentionally want to overwrite local customizations.
+
+The migration can also be published when the consuming application needs to own it:
+
+```bash
+php artisan vendor:publish --tag=qnox-workflows-migrations
+```
+
 Register integration namespaces in `config/workflows.php`:
 
 ```php
