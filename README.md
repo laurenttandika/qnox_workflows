@@ -72,6 +72,14 @@ A Spatie adapter is optional, not an engine dependency. Its `options()` method r
 
 Open `/settings/workflows`, choose a registered module, and create a workflow. Each ordered level has a name, one approver source (`supervisor`, `role`, or `users`), and a rejection-comment option. The first level is always the start and the last is always final. The initiator is the applicant, never an implicit approval level.
 
+For example, a three-level leave workflow may be configured as:
+
+1. Line Manager Approval — supervisor
+2. HR Review — role
+3. Director Approval — selected users
+
+Starting the workflow enters level 1 automatically. Approving a non-final level closes that level and enters the next ordered level. Approving level 3, the last level in this example, closes the workflow with the `approved` status and sets `approved_at`. Administrators do not configure separate start or final flags.
+
 The application selects the exact definition:
 
 ```php
@@ -85,6 +93,29 @@ $instance = $engine->cancel(instance: $instance, actor: $user, comment: 'Withdra
 Useful reads include `currentApprovalLevel()`, `resolvedApprovers()`, `approvalHistory()`, `canApprove()`, `canReject()`, `WorkflowInstance::finalOutcome()`, and `WorkflowInbox::pendingFor()`.
 
 Listen to `WorkflowStarted`, `ApprovalLevelEntered`, `ApprovalRecorded`, `WorkflowApproved`, `WorkflowRejected`, and `WorkflowCancelled`. They are dispatched after commit. Apply module-specific consequences only from final events.
+
+### Rejection and corrected submissions
+
+Rejection is final for the current workflow instance. Rejecting at any level records the actor and comment, closes the active level and all its inbox items, sets the instance status to `rejected`, sets `rejected_at`, and does not create another level.
+
+The package does not return a rejected instance to the initiator or resume it after modification. If corrections are allowed, the consuming module should let the initiator edit or recreate the underlying business request according to its own policy, then start a new workflow instance from level 1. The rejected instance remains unchanged as audit history.
+
+```php
+$previous = $request->workflowInstances()
+    ->where('status', 'rejected')
+    ->latest('id')
+    ->first();
+
+// Authorize and save the corrected request in the consuming module first.
+$newInstance = $engine->start(
+    subject: $request,
+    workflow: $workflow,
+    initiator: $user,
+    context: ['resubmission_of' => $previous?->id],
+);
+```
+
+The `resubmission_of` context value is an optional application convention; the engine preserves it but does not interpret it. Applications that require a completely new business request can create or clone that request before calling `start()`.
 
 ## Runtime guarantees
 
